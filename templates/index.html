@@ -1,0 +1,363 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Deepgram Flux Voice Agent</title>
+
+    <!-- Deepgram Design System CSS -->
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/deepgram-design-system.css') }}">
+
+    <!-- Font Awesome for icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+
+    <!-- Socket.IO Client -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.4/socket.io.min.js"></script>
+
+    <style>
+        /* Custom styles for the voice agent */
+        .conversation-log {
+            max-height: 400px;
+            overflow-y: auto;
+            border: var(--dg-border-width-thin) solid var(--dg-border);
+            border-radius: var(--dg-radius-md);
+            background-color: var(--dg-surface-elevated);
+            padding: var(--dg-space-4);
+            font-family: var(--dg-font-family-mono);
+            font-size: var(--dg-text-sm);
+            line-height: var(--dg-line-height-relaxed);
+        }
+
+        .conversation-message {
+            margin-bottom: var(--dg-space-3);
+            padding: var(--dg-space-2) var(--dg-space-3);
+            border-radius: var(--dg-radius-md);
+            border-left: var(--dg-border-width-thick) solid transparent;
+        }
+
+        .conversation-message.user {
+            background-color: var(--dg-primary-dark);
+            border-left-color: var(--dg-primary);
+            color: var(--dg-white);
+        }
+
+        .conversation-message.agent {
+            background-color: var(--dg-surface);
+            border-left-color: var(--dg-secondary);
+            color: var(--dg-text-primary);
+        }
+
+        .conversation-message.system {
+            background-color: var(--dg-surface-elevated);
+            border-left-color: var(--dg-text-muted);
+            color: var(--dg-text-muted);
+            font-style: italic;
+        }
+
+        .conversation-message .timestamp {
+            font-size: var(--dg-text-xs);
+            color: var(--dg-text-muted);
+            margin-bottom: var(--dg-space-1);
+        }
+
+        .status-indicator {
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            margin-right: var(--dg-space-2);
+        }
+
+        .status-indicator.idle { background-color: var(--dg-text-muted); }
+        .status-indicator.listening { background-color: var(--dg-primary); animation: pulse 1.5s infinite; }
+        .status-indicator.processing { background-color: var(--dg-warning); animation: pulse 1s infinite; }
+        .status-indicator.speaking { background-color: var(--dg-secondary); animation: pulse 1.2s infinite; }
+        .status-indicator.error { background-color: var(--dg-danger); }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.3; }
+        }
+
+        .config-section {
+            background-color: var(--dg-surface-elevated);
+            padding: var(--dg-space-4);
+            border-radius: var(--dg-radius-md);
+            border: var(--dg-border-width-thin) solid var(--dg-border);
+            margin-bottom: var(--dg-space-5);
+        }
+
+        .controls-section {
+            background-color: var(--dg-surface);
+            padding: var(--dg-space-5);
+            border-radius: var(--dg-radius-md);
+            border: var(--dg-border-width-thin) solid var(--dg-border);
+            text-align: center;
+        }
+
+        .device-selector {
+            margin-bottom: var(--dg-space-4);
+        }
+
+        .interim-transcript {
+            color: var(--dg-text-muted);
+            font-style: italic;
+            padding: var(--dg-space-2);
+            background-color: var(--dg-surface-elevated);
+            border-radius: var(--dg-radius-md);
+            margin-bottom: var(--dg-space-2);
+            border-left: var(--dg-border-width-base) solid var(--dg-primary);
+        }
+    </style>
+</head>
+<body>
+    <!-- Sticky Navigation -->
+    <nav class="dg-sticky-nav">
+        <div class="dg-sticky-nav__container">
+            <div class="dg-sticky-nav__logo">
+                <span class="dg-sticky-nav__logo-text">Deepgram Flux Voice Agent</span>
+            </div>
+            <div class="dg-sticky-nav__menu">
+                <span class="dg-status" id="connection-status">
+                    <span class="status-indicator idle" id="status-indicator"></span>
+                    <span id="status-text">Disconnected</span>
+                </span>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Main Content with body padding for sticky nav -->
+    <div class="dg-body-with-sticky-nav">
+        <div class="dg-section dg-constrain-width">
+            <!-- Hero Section -->
+            <div class="dg-section--spacious">
+                <h1 class="dg-hero-title">
+                    <i class="fas fa-microphone"></i>
+                    Deepgram Flux Voice Agent
+                </h1>
+                <div class="dg-prose dg-prose--large dg-text-center">
+                    <p>Experience real-time voice conversations powered by Deepgram Flux API, OpenAI, and Deepgram TTS.</p>
+                    <p class="dg-prose--small">Configure your settings below and start a natural voice conversation with an AI assistant.</p>
+                </div>
+            </div>
+
+            <!-- Configuration Section -->
+            <div class="dg-section">
+                <h2 class="dg-section-heading">
+                    <i class="fas fa-cog"></i>
+                    Configuration
+                </h2>
+
+                <div class="dg-grid-mobile-stack">
+                    <!-- Audio Settings -->
+                    <div class="config-section">
+                        <h3 class="dg-card-heading">
+                            <i class="fas fa-volume-up"></i>
+                            Audio Settings
+                        </h3>
+
+                        <!-- Microphone Selection -->
+                        <div class="form__group device-selector">
+                            <label class="form__label" for="microphone-select">
+                                <i class="fas fa-microphone"></i>
+                                Select Microphone
+                            </label>
+                            <div class="form__select">
+                                <select class="form__input" id="microphone-select">
+                                    <option value="">Loading microphones...</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        <!-- Sample Rate -->
+                        <div class="form__group">
+                            <label class="form__label" for="sample-rate">
+                                <i class="fas fa-wave-square"></i>
+                                Sample Rate (Hz)
+                            </label>
+                            <input type="number" class="form__input" id="sample-rate" value="16000" min="8000" max="48000" step="1000">
+                            <small class="form__hint">Recommended: 16000 Hz for best quality</small>
+                        </div>
+                    </div>
+
+                    <!-- AI Model Settings -->
+                    <div class="config-section">
+                        <h3 class="dg-card-heading">
+                            <i class="fas fa-brain"></i>
+                            AI Models
+                        </h3>
+
+                        <!-- LLM Model Selection -->
+                        <div class="form__group">
+                            <label class="form__label" for="llm-model">
+                                <i class="fas fa-robot"></i>
+                                Language Model
+                            </label>
+                            <div class="form__select">
+                                <select class="form__input" id="llm-model">
+                                    {% for model in llm_models %}
+                                    <option value="{{ model.value }}"{% if model.value == 'gpt-4o-mini' %} selected{% endif %}>
+                                        {{ model.label }}
+                                    </option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+                        </div>
+
+                        <!-- TTS Model Selection -->
+                        <div class="form__group">
+                            <label class="form__label" for="tts-model">
+                                <i class="fas fa-comment"></i>
+                                Voice Model
+                            </label>
+                            <div class="form__select">
+                                <select class="form__input" id="tts-model">
+                                    {% for model in tts_models %}
+                                    <option value="{{ model.value }}"{% if model.value == 'aura-2-phoebe-en' %} selected{% endif %}>
+                                        {{ model.label }}
+                                    </option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Advanced Settings -->
+                <div class="config-section">
+                    <h3 class="dg-card-heading">
+                        <i class="fas fa-sliders-h"></i>
+                        Advanced Settings
+                    </h3>
+
+                    <div class="dg-grid-mobile-stack">
+                        <!-- Preflighting Toggle -->
+                        <div class="form__group">
+                            <div class="form__checkbox">
+                                <input type="checkbox" class="form__input" id="use-preflighting" checked>
+                                <label class="form__label" for="use-preflighting">
+                                    <i class="fas fa-rocket"></i>
+                                    Enable Preflighting (Faster Responses)
+                                </label>
+                            </div>
+                            <small class="form__hint">Preflighting starts generating responses before the user finishes speaking</small>
+                        </div>
+
+                        <!-- Preflight Threshold -->
+                        <div class="form__group" id="preflight-threshold-group">
+                            <label class="form__label" for="preflight-threshold">
+                                <i class="fas fa-tachometer-alt"></i>
+                                Preflight Threshold: <span id="preflight-value">0.3</span>
+                            </label>
+                            <input type="range" class="form__input" id="preflight-threshold"
+                                   min="0.2" max="0.9" step="0.1" value="0.3"
+                                   style="width: 100%; accent-color: var(--dg-primary);">
+                            <small class="form__hint">Lower = faster responses, Higher = fewer false triggers</small>
+                        </div>
+
+                        <!-- EOT Threshold -->
+                        <div class="form__group">
+                            <label class="form__label" for="eot-threshold">
+                                <i class="fas fa-stop"></i>
+                                End-of-Turn Threshold: <span id="eot-value">0.8</span>
+                            </label>
+                            <input type="range" class="form__input" id="eot-threshold"
+                                   min="0.5" max="0.9" step="0.1" value="0.8"
+                                   style="width: 100%; accent-color: var(--dg-primary);">
+                            <small class="form__hint">Lower = quicker turns, Higher = more patience</small>
+                        </div>
+
+                        <!-- EOT Timeout -->
+                        <div class="form__group">
+                            <label class="form__label" for="eot-timeout">
+                                <i class="fas fa-hourglass-half"></i>
+                                Turn Timeout (ms): <span id="timeout-value">3000</span>
+                            </label>
+                            <input type="range" class="form__input" id="eot-timeout"
+                                   min="1000" max="10000" step="500" value="3000"
+                                   style="width: 100%; accent-color: var(--dg-primary);">
+                            <small class="form__hint">Maximum time to wait for turn completion</small>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Control Section -->
+            <div class="dg-section">
+                <div class="controls-section">
+                    <h2 class="dg-section-heading">
+                        <i class="fas fa-play-circle"></i>
+                        Voice Conversation
+                    </h2>
+
+                    <div class="dg-action-group">
+                        <button class="btn btn--primary btn--large" id="start-btn" disabled>
+                            <i class="fas fa-microphone"></i>
+                            Start Conversation
+                        </button>
+                        <button class="btn btn--danger-ghost btn--large" id="stop-btn" disabled>
+                            <i class="fas fa-stop"></i>
+                            Stop Conversation
+                        </button>
+                    </div>
+
+                    <div class="dg-status dg-status--with-icon" style="margin-top: var(--dg-space-4);">
+                        <i class="fas fa-info-circle dg-status__icon"></i>
+                        <span id="instruction-text">Configure your settings above, then click "Start Conversation" to begin</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Interim Transcript Display -->
+            <div class="dg-section" id="interim-section" style="display: none;">
+                <h3 class="dg-card-heading">
+                    <i class="fas fa-comment-dots"></i>
+                    Live Transcript
+                </h3>
+                <div id="interim-transcript" class="interim-transcript">
+                    Listening...
+                </div>
+            </div>
+
+            <!-- Conversation Log -->
+            <div class="dg-section">
+                <h2 class="dg-section-heading">
+                    <i class="fas fa-comments"></i>
+                    Conversation History
+                </h2>
+                <div id="conversation-log" class="conversation-log">
+                    <div class="conversation-message system">
+                        <div class="timestamp">System</div>
+                        <div>Conversation log will appear here once you start talking...</div>
+                    </div>
+                </div>
+
+                <div class="dg-result-actions">
+                    <button class="btn btn--secondary" id="clear-log-btn">
+                        <i class="fas fa-trash"></i>
+                        Clear Log
+                    </button>
+                    <button class="btn btn--secondary" id="export-log-btn">
+                        <i class="fas fa-download"></i>
+                        Export Conversation
+                    </button>
+                </div>
+            </div>
+
+            <!-- Debug Information -->
+            <div class="dg-section" id="debug-section">
+                <h2 class="dg-section-heading">
+                    <i class="fas fa-bug"></i>
+                    Debug Information
+                </h2>
+                <div class="dg-code-block dg-code-block--compact" id="debug-log">
+                    <pre>Debug information will appear here...</pre>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- JavaScript -->
+    <script src="{{ url_for('static', filename='js/voice-agent.js') }}"></script>
+</body>
+</html>
