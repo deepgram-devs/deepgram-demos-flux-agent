@@ -410,8 +410,8 @@ class VoiceAgent {
         const inputData = e.inputBuffer.getChannelData(0);
         const pcmData = this.convertFloatToPcm(inputData);
 
-        // Send audio data to server
-        this.socket.emit('audio_data', Array.from(pcmData));
+        // Send audio data to server as binary data
+        this.socket.emit('audio_data', pcmData.buffer);
         lastSendTime = now;
       }
     };

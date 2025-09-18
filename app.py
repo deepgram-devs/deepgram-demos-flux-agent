@@ -411,13 +411,21 @@ def handle_audio_data(data):
     if not session['conversation_active']:
         return
 
-    logger.debug(f"Session {session_id}: Received audio data: {len(data)} samples")
+    logger.debug(f"Session {session_id}: Received audio data: {len(data)} bytes")
 
     # Store audio data for Flux WebSocket to consume
     if 'audio_buffer' not in session:
         session['audio_buffer'] = []
 
-    session['audio_buffer'].append(data)
+    # Convert binary data to bytes if needed
+    if isinstance(data, (list, tuple)):
+        # If it's still coming as array, convert it
+        audio_bytes = struct.pack(f'{len(data)}h', *data)
+    else:
+        # If it's already binary data, use it directly
+        audio_bytes = bytes(data)
+
+    session['audio_buffer'].append(audio_bytes)
 
 async def connect_to_flux(session_id: str):
     """Connect to Deepgram Flux WebSocket and handle the conversation."""
@@ -431,22 +439,8 @@ async def connect_to_flux(session_id: str):
     session = active_sessions[session_id]
     config = session['config']
 
-    # Build Flux WebSocket URL with parameters
-    flux_params = {
-        'encoding': FLUX_ENCODING,
-        'sample_rate': config['sample_rate'],
-        'channels': 1,
-        'interim_results': 'true',
-        'utterance_end_ms': config['eot_timeout_ms'],
-        'endpointing': config['eot_threshold'],
-    }
-
-    if config['use_preflighting']:
-        flux_params['preflight_threshold'] = config['preflight_threshold']
-
-    # Build query string
-    query_string = '&'.join([f"{k}={v}" for k, v in flux_params.items()])
-    flux_url = f"{FLUX_URL}?{query_string}"
+    # Build Flux WebSocket URL with parameters (matching reference code)
+    flux_url = f"{FLUX_URL}?model=flux-general-en&sample_rate={config['sample_rate']}&encoding={FLUX_ENCODING}"
 
     headers = {
         'Authorization': f'Token {DEEPGRAM_API_KEY}',
@@ -454,7 +448,7 @@ async def connect_to_flux(session_id: str):
     }
 
     try:
-        async with websockets.connect(flux_url, extra_headers=headers) as websocket:
+        async with websockets.connect(flux_url, additional_headers=headers) as websocket:
             session['flux_ws'] = websocket
             logger.info(f"Session {session_id}: Connected to Flux WebSocket")
 
@@ -497,14 +491,7 @@ async def send_audio_to_flux(session_id: str, websocket):
         while session['conversation_active'] and not session.get('should_close', False):
             # Check for buffered audio data
             if 'audio_buffer' in session and session['audio_buffer']:
-                audio_data = session['audio_buffer'].pop(0)
-
-                # Convert to bytes if needed (audio_data should be Int16Array from JS)
-                if hasattr(audio_data, 'tobytes'):
-                    audio_bytes = audio_data.tobytes()
-                else:
-                    # Convert array to bytes
-                    audio_bytes = struct.pack(f'{len(audio_data)}h', *audio_data)
+                audio_bytes = session['audio_buffer'].pop(0)
 
                 await websocket.send(audio_bytes)
                 logger.debug(f"Session {session_id}: Sent {len(audio_bytes)} bytes to Flux")
@@ -532,53 +519,64 @@ async def handle_flux_responses(session_id: str, websocket):
                 logger.debug(f"Session {session_id}: Flux response: {data}")
 
                 # Handle different Flux event types
-                if data.get('type') == 'UtteranceEnd':
-                    # User finished speaking
-                    transcript = data.get('channel', {}).get('alternatives', [{}])[0].get('transcript', '')
-                    if transcript.strip():
-                        logger.info(f"Session {session_id}: User said: '{transcript}'")
+                if data.get('type') == 'receiveConnected':
+                    logger.info(f"Session {session_id}: Connected to Flux - ready to stream audio")
 
-                        # Add to conversation history
-                        session['messages'].append({"role": "user", "content": transcript})
-
-                        # Notify client
-                        socketio.emit('user_speech', {
-                            'transcript': transcript,
-                            'timestamp': datetime.now().isoformat()
-                        }, room=session_id)
-
-                        # Generate and send agent response
-                        if config['use_preflighting']:
-                            # For non-preflighting, generate response now
-                            asyncio.create_task(generate_and_send_response(session_id, transcript, config))
-
-                elif data.get('type') == 'SpeechStarted':
-                    logger.info(f"Session {session_id}: User started speaking")
-                    session['state'] = ConversationState.LISTENING
-                    socketio.emit('speech_started', {
+                elif data.get('type') == 'receiveFatalError':
+                    logger.error(f"Session {session_id}: Fatal error: {data.get('error', 'Unknown error')}")
+                    socketio.emit('conversation_error', {
+                        'error': f"Flux fatal error: {data.get('error', 'Unknown error')}",
                         'timestamp': datetime.now().isoformat()
                     }, room=session_id)
 
-                elif data.get('type') == 'Results':
-                    # Interim or final results
-                    transcript = data.get('channel', {}).get('alternatives', [{}])[0].get('transcript', '')
-                    is_final = data.get('is_final', False)
+                elif data.get('type') == 'TurnInfo':
+                    event = data.get('event')
+                    logger.debug(f"Session {session_id}: TurnInfo event: {event}")
 
-                    if transcript.strip():
-                        socketio.emit('interim_transcript', {
-                            'transcript': transcript,
-                            'is_final': is_final,
+                    if event in ['StartOfTurn', 'SpeechResumed']:
+                        logger.info(f"Session {session_id}: {event} - User started speaking")
+                        session['state'] = ConversationState.LISTENING
+                        socketio.emit('speech_started', {
                             'timestamp': datetime.now().isoformat()
                         }, room=session_id)
 
-                elif data.get('type') == 'PreflightReq':
-                    # Preflighting request from Flux
-                    if config['use_preflighting']:
-                        tentative_transcript = data.get('channel', {}).get('alternatives', [{}])[0].get('transcript', '')
-                        logger.info(f"Session {session_id}: Preflight request for: '{tentative_transcript}'")
+                    elif event == 'Preflight':
+                        # Preflighting request from Flux
+                        if config['use_preflighting']:
+                            tentative_transcript = data.get('transcript', '')
+                            logger.info(f"Session {session_id}: Preflight request for: '{tentative_transcript}'")
 
-                        # Generate preflight response
-                        asyncio.create_task(handle_preflight_request(session_id, tentative_transcript, config))
+                            # Generate preflight response
+                            asyncio.create_task(handle_preflight_request(session_id, tentative_transcript, config))
+
+                    elif event == 'EndOfTurn':
+                        # User finished speaking
+                        transcript = data.get('transcript', '')
+                        if transcript.strip():
+                            logger.info(f"Session {session_id}: User said: '{transcript}'")
+
+                            # Add to conversation history
+                            session['messages'].append({"role": "user", "content": transcript})
+
+                            # Notify client
+                            socketio.emit('user_speech', {
+                                'transcript': transcript,
+                                'timestamp': datetime.now().isoformat()
+                            }, room=session_id)
+
+                            # Generate and send agent response (for non-preflighting mode)
+                            if not config['use_preflighting']:
+                                asyncio.create_task(generate_and_send_response(session_id, transcript, config))
+
+                    elif event == 'Update':
+                        # Interim transcript updates
+                        transcript = data.get('transcript', '')
+                        if transcript.strip():
+                            socketio.emit('interim_transcript', {
+                                'transcript': transcript,
+                                'is_final': False,
+                                'timestamp': datetime.now().isoformat()
+                            }, room=session_id)
 
                 # Forward raw Flux events to client for debugging
                 socketio.emit('flux_event', {
