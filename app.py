@@ -193,9 +193,9 @@ async def generate_tts_audio(text: str, session_id: str, config: Dict[str, Any])
         tts_options = SpeakWSOptions(
             model=config['tts_model'],
             encoding="linear16",
-            sample_rate=16000  # Match Flux and frontend sample rate
+            sample_rate=config['sample_rate']  # Use dynamic sample rate from config
         )
-        logger.info(f"Session {session_id}: TTS Options: model={config['tts_model']}, encoding=linear16, sample_rate=16000")
+        logger.info(f"Session {session_id}: TTS Options: model={config['tts_model']}, encoding=linear16, sample_rate={config['sample_rate']}")
 
         # Start TTS
         logger.info(f"Session {session_id}: Starting TTS WebSocket connection...")

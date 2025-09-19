@@ -341,9 +341,9 @@ class VoiceAgent {
       this.updateStatus('speaking', 'Agent speaking...');
 
       if (data.audio && data.audio.length > 0) {
-        // Convert array back to audio data and play
-        const audioData = new Int16Array(data.audio);
-        this.addAudioToQueue(audioData);
+        // Convert array to Uint8Array and create WAV format
+        const audioBytes = new Uint8Array(data.audio);
+        this.processAndPlayAudio(audioBytes);
         this.addDebugMessage('AGENT', `Playing ${data.audio.length} bytes of audio`);
       }
     });
@@ -533,6 +533,86 @@ class VoiceAgent {
     }
   }
 
+  /**
+   * Process and play audio using proper WAV format
+   */
+  async processAndPlayAudio(audioBytes) {
+    try {
+      // Ensure we have an audio context
+      if (!this.audioContext || this.audioContext.state === 'closed') {
+        this.audioContext = new AudioContext();
+      }
+
+      if (this.audioContext.state === 'suspended') {
+        await this.audioContext.resume();
+      }
+
+      // Create WAV header for the raw linear16 data
+      const wavBuffer = this.createWAVBuffer(audioBytes, this.config.sample_rate);
+
+      // Use the Web Audio API to decode the WAV data
+      const audioBuffer = await this.audioContext.decodeAudioData(wavBuffer);
+
+      // Play the decoded audio
+      this.playDecodedAudio(audioBuffer);
+
+    } catch (error) {
+      console.error('Error processing audio:', error);
+      this.addDebugMessage('AUDIO', `Audio processing error: ${error.message}`);
+    }
+  }
+
+  /**
+   * Create proper WAV format buffer from raw PCM data
+   */
+  createWAVBuffer(pcmData, sampleRate) {
+    const length = pcmData.length;
+    const buffer = new ArrayBuffer(44 + length);
+    const view = new DataView(buffer);
+
+    // WAV header
+    const writeString = (offset, string) => {
+      for (let i = 0; i < string.length; i++) {
+        view.setUint8(offset + i, string.charCodeAt(i));
+      }
+    };
+
+    writeString(0, 'RIFF');
+    view.setUint32(4, 36 + length, true);
+    writeString(8, 'WAVE');
+    writeString(12, 'fmt ');
+    view.setUint32(16, 16, true);
+    view.setUint16(20, 1, true); // PCM format
+    view.setUint16(22, 1, true); // Mono
+    view.setUint32(24, sampleRate, true);
+    view.setUint32(28, sampleRate * 2, true); // Byte rate
+    view.setUint16(32, 2, true); // Block align
+    view.setUint16(34, 16, true); // Bits per sample
+    writeString(36, 'data');
+    view.setUint32(40, length, true);
+
+    // Copy PCM data
+    const pcmView = new Uint8Array(buffer, 44);
+    pcmView.set(pcmData);
+
+    return buffer;
+  }
+
+  /**
+   * Play decoded audio buffer
+   */
+  playDecodedAudio(audioBuffer) {
+    const source = this.audioContext.createBufferSource();
+    source.buffer = audioBuffer;
+    source.connect(this.audioContext.destination);
+
+    source.onended = () => {
+      this.updateStatus('listening', 'Listening...');
+    };
+
+    source.start(0);
+  }
+
   async playNextInQueue() {
     if (this.audioQueue.length === 0) {
       this.isPlayingAudio = false;
@@ -553,13 +633,15 @@ class VoiceAgent {
         await this.audioContext.resume();
       }
 
-      // Create buffer with correct sample rate for TTS audio (24000Hz)
-      const buffer = this.audioContext.createBuffer(1, audioData.length, 24000);
+      // Create buffer with correct sample rate for TTS audio (use configured sample rate)
+      const buffer = this.audioContext.createBuffer(1, audioData.length, this.config.sample_rate);
       const channelData = buffer.getChannelData(0);
 
-      // Convert Int16 to Float32
+      // Convert Int16 to Float32 with proper normalization
       for (let i = 0; i < audioData.length; i++) {
-        channelData[i] = audioData[i] / 32768.0;
+        // Ensure we're working with signed 16-bit integers and normalize properly
+        const sample = audioData[i];
+        channelData[i] = Math.max(-1, Math.min(1, sample / 32767.0));
       }
 
       // Create and play source
