@@ -40,10 +40,10 @@ The user is speaking to you via voice, so respond naturally as if in a live conv
 # Available TTS Models
 TTS_MODEL_OPTIONS = [
     {"value": "aura-2-phoebe-en", "label": "Phoebe (Female, US English)"},
-    {"value": "aura-2-bradley-en", "label": "Bradley (Male, US English)"},
+    {"value": "aura-2-apollo-en", "label": "Apollo (Male, US English)"},
     {"value": "aura-2-stella-en", "label": "Stella (Female, US English)"},
     {"value": "aura-2-luna-en", "label": "Luna (Female, US English)"},
-    {"value": "aura-2-hera-en", "label": "Hera (Female, US English)"},
+    {"value": "aura-2-mars-en", "label": "Mars (Male, US English)"},
 ]
 
 # Available LLM Models
