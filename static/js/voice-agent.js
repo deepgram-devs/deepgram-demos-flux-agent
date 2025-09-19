@@ -18,7 +18,7 @@ class VoiceAgent {
 
     // Configuration
     this.config = {
-      use_preflighting: true,
+      use_preflighting: false,  // Default to non-preflighting mode (simpler)
       sample_rate: 16000,
       llm_model: 'gpt-4o-mini',
       tts_model: 'aura-2-phoebe-en',
@@ -336,6 +336,12 @@ class VoiceAgent {
       console.error('Agent error:', data.error);
       this.updateStatus('error', `Agent error: ${data.error}`);
       this.addDebugMessage('AGENT', `Error: ${data.error}`);
+    });
+
+    this.socket.on('agent_response', (data) => {
+      console.log('Agent response:', data.response);
+      this.addConversationMessage('agent', data.response, data.timestamp);
+      this.addDebugMessage('AGENT', `"${data.response}"`);
     });
   }
 

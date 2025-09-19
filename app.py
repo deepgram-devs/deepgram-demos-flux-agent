@@ -146,18 +146,17 @@ async def generate_agent_reply_preflighting(
         tts_options = SpeakWSOptions(
             model=config['tts_model'],
             encoding="linear16",
-            sample_rate=24000,  # Deepgram TTS standard rate
-            container="none"
+            sample_rate=16000  # Match Flux and frontend sample rate
         )
 
         # Start TTS
-        if not await dg_tts_ws.start(tts_options):
+        if not dg_tts_ws.start(tts_options):  # Remove await - this is synchronous
             logger.error(f"Session {session_id}: Failed to start TTS WebSocket")
             return None
 
         # Send text to TTS
-        await dg_tts_ws.send_text(agent_message)
-        await dg_tts_ws.flush()
+        dg_tts_ws.send_text(agent_message)  # Remove await - this is synchronous
+        dg_tts_ws.flush()  # Remove await - this is synchronous
 
         # Collect audio data
         audio_chunks = []
@@ -174,7 +173,7 @@ async def generate_agent_reply_preflighting(
                 break
 
         # Close TTS connection
-        await dg_tts_ws.finish()
+        dg_tts_ws.finish()  # Remove await - this is synchronous
 
         # Combine audio chunks
         if audio_chunks:
@@ -196,94 +195,181 @@ async def generate_agent_reply_normal(
 ) -> Optional[bytes]:
     """Generate agent reply using normal (non-preflighting) approach."""
 
-    logger.info(f"Session {session_id}: Generating response for: '{user_speech}'")
+    logger.info(f"Session {session_id}: *** INSIDE generate_agent_reply_normal() ***")
+    logger.info(f"Session {session_id}: User speech: '{user_speech}'")
+    logger.info(f"Session {session_id}: Current conversation history: {messages}")
+    logger.info(f"Session {session_id}: API Key set: {'Yes' if OPENAI_API_KEY else 'No'}")
 
     try:
         # Set up OpenAI client
+        logger.info(f"Session {session_id}: Creating OpenAI client...")
         openai_client = openai.OpenAI(api_key=OPENAI_API_KEY)
 
         # Prepare messages for LLM
         llm_messages = messages.copy()
         llm_messages.append({"role": "user", "content": user_speech})
 
-        logger.info(f"Session {session_id}: Calling OpenAI with {config['llm_model']}")
+        final_messages = [{"role": "system", "content": SYSTEM_PROMPT}] + llm_messages
+        logger.info(f"Session {session_id}: Final messages to send to OpenAI: {final_messages}")
+        logger.info(f"Session {session_id}: Calling OpenAI API with model: {config['llm_model']}")
 
         # Call OpenAI API
         response = openai_client.chat.completions.create(
             model=config['llm_model'],
-            messages=[{"role": "system", "content": SYSTEM_PROMPT}] + llm_messages,
+            messages=final_messages,
             temperature=0.7,
             max_tokens=150  # Keep responses concise for voice
         )
 
         agent_message = response.choices[0].message.content
+        logger.info(f"Session {session_id}: *** OPENAI RESPONSE SUCCESS ***")
         logger.info(f"Session {session_id}: Generated response: '{agent_message}'")
 
+        # Send agent response to UI chat history
+        socketio.emit('agent_response', {
+            'response': agent_message,
+            'timestamp': datetime.now().isoformat()
+        }, room=session_id)
+
         # Generate TTS audio (similar to preflighting but simpler)
-        return await generate_tts_audio(agent_message, session_id, config)
+        logger.info(f"Session {session_id}: About to generate TTS audio for: '{agent_message}'")
+        tts_result = await generate_tts_audio(agent_message, session_id, config)
+        logger.info(f"Session {session_id}: TTS generation result: {len(tts_result) if tts_result else 0} bytes")
+        return tts_result
 
     except Exception as e:
-        logger.error(f"Session {session_id}: Error in normal response generation: {e}")
+        logger.error(f"Session {session_id}: *** ERROR IN generate_agent_reply_normal() ***")
+        logger.error(f"Session {session_id}: Error details: {e}")
+        import traceback
+        logger.error(f"Session {session_id}: Full traceback: {traceback.format_exc()}")
         return None
 
 async def generate_tts_audio(text: str, session_id: str, config: Dict[str, Any]) -> Optional[bytes]:
     """Generate TTS audio for given text."""
 
+    logger.info(f"Session {session_id}: *** STARTING TTS GENERATION ***")
+    logger.info(f"Session {session_id}: TTS Text: '{text}'")
+    logger.info(f"Session {session_id}: TTS Model: {config['tts_model']}")
+    logger.info(f"Session {session_id}: API Key Available: {'Yes' if DEEPGRAM_API_KEY else 'No'}")
+
     try:
         # Set up TTS WebSocket
+        logger.info(f"Session {session_id}: Creating Deepgram TTS WebSocket client...")
         dg_tts_ws = DeepgramClient(api_key=DEEPGRAM_API_KEY).speak.websocket.v("1")
+        logger.info(f"Session {session_id}: TTS WebSocket client created")
 
         audio_queue: asyncio.Queue[Union[bytes, TTSEvent]] = asyncio.Queue()
+        audio_chunks_received = 0
+
+        # Get current event loop for thread-safe operations
+        loop = asyncio.get_running_loop()
 
         # TTS event handlers
-        def on_binary_data(self, binary_data, **kwargs):
-            asyncio.create_task(audio_queue.put(binary_data))
+        def on_binary_data(self, data, **kwargs):
+            nonlocal audio_chunks_received
+            audio_chunks_received += 1
+            logger.info(f"Session {session_id}: *** TTS AUDIO DATA RECEIVED *** Chunk #{audio_chunks_received}, {len(data)} bytes")
+            # Use thread-safe method to put data in async queue from sync callback
+            asyncio.run_coroutine_threadsafe(audio_queue.put(data), loop)
 
-        def on_flush(self, flushed, **kwargs):
-            asyncio.create_task(audio_queue.put(TTSEvent.FLUSHED))
+        def on_flushed(self, **kwargs):
+            logger.info(f"Session {session_id}: *** TTS FLUSHED EVENT RECEIVED ***")
+            # Use thread-safe method to put event in async queue from sync callback
+            asyncio.run_coroutine_threadsafe(audio_queue.put(TTSEvent.FLUSHED), loop)
+
+        def on_open(self, open, **kwargs):
+            logger.info(f"Session {session_id}: *** TTS WEBSOCKET OPENED ***")
+
+        def on_error(self, error, **kwargs):
+            logger.error(f"Session {session_id}: *** TTS WEBSOCKET ERROR *** {error}")
+
+        def on_warning(self, warning, **kwargs):
+            logger.warning(f"Session {session_id}: *** TTS WEBSOCKET WARNING *** {warning}")
+
+        def on_metadata(self, metadata, **kwargs):
+            logger.info(f"Session {session_id}: *** TTS METADATA *** {metadata}")
 
         # Register handlers
+        logger.info(f"Session {session_id}: Registering TTS event handlers...")
         dg_tts_ws.on(SpeakWebSocketEvents.AudioData, on_binary_data)
-        dg_tts_ws.on(SpeakWebSocketEvents.Flush, on_flush)
+        dg_tts_ws.on(SpeakWebSocketEvents.Flushed, on_flushed)
+        dg_tts_ws.on(SpeakWebSocketEvents.Open, on_open)
+        dg_tts_ws.on(SpeakWebSocketEvents.Error, on_error)
+        dg_tts_ws.on(SpeakWebSocketEvents.Warning, on_warning)
+        dg_tts_ws.on(SpeakWebSocketEvents.Metadata, on_metadata)
 
         # TTS options
         tts_options = SpeakWSOptions(
             model=config['tts_model'],
             encoding="linear16",
-            sample_rate=24000,
-            container="none"
+            sample_rate=16000  # Match Flux and frontend sample rate
         )
+        logger.info(f"Session {session_id}: TTS Options: model={config['tts_model']}, encoding=linear16, sample_rate=16000")
 
         # Start TTS
-        if not await dg_tts_ws.start(tts_options):
-            logger.error(f"Session {session_id}: Failed to start TTS WebSocket")
+        logger.info(f"Session {session_id}: Starting TTS WebSocket connection...")
+        start_result = dg_tts_ws.start(tts_options)  # Remove await - this is synchronous
+        logger.info(f"Session {session_id}: TTS WebSocket start result: {start_result}")
+
+        if not start_result:
+            logger.error(f"Session {session_id}: *** TTS WEBSOCKET START FAILED ***")
             return None
 
+        logger.info(f"Session {session_id}: *** TTS WEBSOCKET STARTED SUCCESSFULLY ***")
+
         # Send text and flush
-        await dg_tts_ws.send_text(text)
-        await dg_tts_ws.flush()
+        logger.info(f"Session {session_id}: Sending text to TTS: '{text}'")
+        dg_tts_ws.send_text(text)  # Remove await - this is synchronous
+        logger.info(f"Session {session_id}: Text sent, now flushing...")
+        dg_tts_ws.flush()  # Remove await - this is synchronous
+        logger.info(f"Session {session_id}: TTS flush complete, waiting for audio...")
 
         # Collect audio
         audio_chunks = []
+        chunk_count = 0
+        total_timeout = 10.0  # Increased timeout
+
+        logger.info(f"Session {session_id}: Starting audio collection loop...")
         while True:
             try:
-                chunk = await asyncio.wait_for(audio_queue.get(), timeout=5.0)
+                logger.debug(f"Session {session_id}: Waiting for audio chunk... (timeout: {total_timeout}s)")
+                chunk = await asyncio.wait_for(audio_queue.get(), timeout=total_timeout)
+
                 if chunk == TTSEvent.FLUSHED:
+                    logger.info(f"Session {session_id}: *** RECEIVED FLUSH EVENT - AUDIO COLLECTION COMPLETE ***")
                     break
                 elif isinstance(chunk, bytes):
+                    chunk_count += 1
                     audio_chunks.append(chunk)
+                    logger.info(f"Session {session_id}: Collected audio chunk #{chunk_count}, {len(chunk)} bytes, total chunks: {len(audio_chunks)}")
+                else:
+                    logger.warning(f"Session {session_id}: Unexpected chunk type: {type(chunk)}")
+
             except asyncio.TimeoutError:
+                logger.warning(f"Session {session_id}: *** TTS TIMEOUT after {total_timeout}s *** Chunks received: {len(audio_chunks)}")
                 break
 
-        await dg_tts_ws.finish()
+        # Finalize
+        logger.info(f"Session {session_id}: Finishing TTS WebSocket...")
+        try:
+            dg_tts_ws.finish()  # Remove await - this is synchronous
+            logger.info(f"Session {session_id}: TTS WebSocket finished successfully")
+        except Exception as finish_error:
+            logger.warning(f"Session {session_id}: TTS finish error (non-critical): {finish_error}")
 
+        # Return results
         if audio_chunks:
-            return b''.join(audio_chunks)
-
-        return None
+            combined_audio = b''.join(audio_chunks)
+            logger.info(f"Session {session_id}: *** TTS SUCCESS *** Total chunks: {len(audio_chunks)}, Total bytes: {len(combined_audio)}")
+            return combined_audio
+        else:
+            logger.error(f"Session {session_id}: *** TTS FAILED - NO AUDIO CHUNKS RECEIVED ***")
+            return None
 
     except Exception as e:
-        logger.error(f"Session {session_id}: TTS error: {e}")
+        logger.error(f"Session {session_id}: *** TTS EXCEPTION *** {e}")
+        import traceback
+        logger.error(f"Session {session_id}: TTS Full traceback: {traceback.format_exc()}")
         return None
 
 # Flask routes
@@ -552,8 +638,10 @@ async def handle_flux_responses(session_id: str, websocket):
                     elif event == 'EndOfTurn':
                         # User finished speaking
                         transcript = data.get('transcript', '')
+                        logger.info(f"Session {session_id}: EndOfTurn event - transcript: '{transcript}', use_preflighting: {config['use_preflighting']}")
+
                         if transcript.strip():
-                            logger.info(f"Session {session_id}: User said: '{transcript}'")
+                            logger.info(f"Session {session_id}: User said: '{transcript}' - PROCESSING USER SPEECH")
 
                             # Add to conversation history
                             session['messages'].append({"role": "user", "content": transcript})
@@ -566,7 +654,12 @@ async def handle_flux_responses(session_id: str, websocket):
 
                             # Generate and send agent response (for non-preflighting mode)
                             if not config['use_preflighting']:
+                                logger.info(f"Session {session_id}: NON-PREFLIGHTING MODE - Starting LLM generation task")
                                 asyncio.create_task(generate_and_send_response(session_id, transcript, config))
+                            else:
+                                logger.info(f"Session {session_id}: PREFLIGHTING MODE - Should use preflight response (if available)")
+                        else:
+                            logger.warning(f"Session {session_id}: EndOfTurn event but transcript is empty!")
 
                     elif event == 'Update':
                         # Interim transcript updates
@@ -596,6 +689,10 @@ async def handle_flux_responses(session_id: str, websocket):
 async def generate_and_send_response(session_id: str, user_speech: str, config: Dict[str, Any]):
     """Generate and send agent response (non-preflighting mode)."""
 
+    logger.info(f"Session {session_id}: *** STARTING AGENT RESPONSE GENERATION ***")
+    logger.info(f"Session {session_id}: User speech: '{user_speech}'")
+    logger.info(f"Session {session_id}: Config: {config}")
+
     session = active_sessions[session_id]
     session['state'] = ConversationState.PROCESSING
 
@@ -604,6 +701,7 @@ async def generate_and_send_response(session_id: str, user_speech: str, config: 
     }, room=session_id)
 
     try:
+        logger.info(f"Session {session_id}: About to call generate_agent_reply_normal()")
         # Generate response
         audio_data = await generate_agent_reply_normal(
             session['messages'],
@@ -611,6 +709,7 @@ async def generate_and_send_response(session_id: str, user_speech: str, config: 
             session_id,
             config
         )
+        logger.info(f"Session {session_id}: generate_agent_reply_normal() returned: {len(audio_data) if audio_data else 0} bytes")
 
         if audio_data:
             # Add agent message to conversation history
@@ -629,7 +728,10 @@ async def generate_and_send_response(session_id: str, user_speech: str, config: 
         session['state'] = ConversationState.LISTENING
 
     except Exception as e:
-        logger.error(f"Session {session_id}: Error generating response: {e}")
+        logger.error(f"Session {session_id}: *** ERROR IN generate_and_send_response() ***")
+        logger.error(f"Session {session_id}: Error details: {e}")
+        import traceback
+        logger.error(f"Session {session_id}: Full traceback: {traceback.format_exc()}")
         session['state'] = ConversationState.ERROR
 
         socketio.emit('agent_error', {
