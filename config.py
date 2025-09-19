@@ -14,12 +14,8 @@ OPENAI_LLM_MODEL = "gpt-4o-mini"           # LLM model for responses
 DEEPGRAM_TTS_MODEL = "aura-2-phoebe-en"    # Voice for agent speech
 
 # Turn Detection Thresholds
-PREFLIGHT_THRESHOLD = 0.3    # When to start preparing responses (0.2-0.9)
 EOT_THRESHOLD = 0.8          # When to finalize turn completion (0.5-0.9)
 EOT_TIMEOUT_MS = 3000        # Max wait time for turn completion (ms)
-
-# Extra Latency (for testing)
-EXTRA_LLM_LATENCY_SECONDS = 0.0
 
 # API Keys (from environment variables)
 DEEPGRAM_API_KEY = os.getenv("DEEPGRAM_API_KEY")

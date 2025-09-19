@@ -6,7 +6,6 @@ A real-time voice conversation application powered by Deepgram Flux API, OpenAI,
 
 - **Real-time voice conversations** with AI assistant
 - **Microphone selection** from available devices
-- **Preflighting vs Non-preflighting modes** for optimal performance
 - **Configurable AI models** (OpenAI LLM and Deepgram TTS)
 - **Advanced settings** for turn detection thresholds
 - **Live conversation display** with real-time transcripts
@@ -84,7 +83,6 @@ DEEPGRAM_TTS_MODEL = "aura-2-phoebe-en"
 EOT_THRESHOLD = 0.8
 EOT_TIMEOUT_MS = 3000
 ```
-
 ## How to Use
 
 1. **Configure Settings**: Select your microphone and adjust AI model settings
@@ -93,21 +91,6 @@ EOT_TIMEOUT_MS = 3000
 4. **Listen to Responses**: The AI assistant will respond with natural speech
 5. **Monitor Progress**: Watch the conversation log and debug information
 6. **Stop When Done**: Click "Stop Conversation" to end the session
-
-## Preflighting vs Non-Preflighting
-
-### Non-Preflighting Mode (Default)
-- **Conservative approach**: Waits for complete utterances before responding
-- **Fewer LLM calls**: More cost-effective for longer conversations
-- **Best for**: Cost-conscious usage, longer monologues
-
-### Preflighting Mode
-> Not available yet.
-
-- **Faster responses**: AI starts generating responses before you finish speaking
-- **More LLM calls**: Uses more API credits but provides snappier conversations
-- **Best for**: Interactive conversations, demos, real-time use
-
 
 ## Troubleshooting
 

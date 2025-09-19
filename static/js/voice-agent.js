@@ -68,8 +68,6 @@ class VoiceAgent {
       this.updateInstructions('Select your microphone and configure settings, then click "Start Conversation"');
 
       console.log('🎉 === VoiceAgent INITIALIZATION COMPLETE ===');
-      console.log('🔧 Final app state - use_preflighting:', this.config.use_preflighting);
-      console.log('🔧 Final checkbox state:', this.elements.usePreflighting?.checked);
 
     } catch (error) {
       console.error('❌ Initialization failed:', error);
@@ -97,7 +95,7 @@ class VoiceAgent {
     this.elements.eotTimeout = document.getElementById('eot-timeout');
     this.elements.timeoutValue = document.getElementById('timeout-value');
 
-    console.log('✅ Configuration elements loaded (non-preflighting mode)');
+    console.log('✅ Configuration elements loaded');
 
     // Display elements
     this.elements.statusIndicator = document.getElementById('status-indicator');
@@ -107,14 +105,6 @@ class VoiceAgent {
     this.elements.debugLog = document.getElementById('debug-log');
     this.elements.interimTranscript = document.getElementById('interim-transcript');
     this.elements.interimSection = document.getElementById('interim-section');
-
-    // Range value displays
-    this.elements.preflightValue = document.getElementById('preflight-value');
-    this.elements.eotValue = document.getElementById('eot-value');
-    this.elements.timeoutValue = document.getElementById('timeout-value');
-
-    // Preflight threshold group
-    this.elements.preflightGroup = document.getElementById('preflight-threshold-group');
   }
 
   setupEventHandlers() {
@@ -145,20 +135,7 @@ class VoiceAgent {
       this.sendConfigUpdate();
     });
 
-    this.elements.usePreflighting.addEventListener('change', (e) => {
-      this.config.use_preflighting = e.target.checked;
-      this.elements.preflightGroup.style.display = e.target.checked ? 'block' : 'none';
-      this.sendConfigUpdate();
-    });
-
     // Range sliders
-    this.elements.preflightThreshold.addEventListener('input', (e) => {
-      const value = parseFloat(e.target.value);
-      this.config.preflight_threshold = value;
-      this.elements.preflightValue.textContent = value.toFixed(1);
-      this.sendConfigUpdate();
-    });
-
     this.elements.eotThreshold.addEventListener('input', (e) => {
       const value = parseFloat(e.target.value);
       this.config.eot_threshold = value;
@@ -226,7 +203,7 @@ class VoiceAgent {
   }
 
   initializeConfigurationUI() {
-    console.log('🎨 === INITIALIZING CONFIGURATION UI (NON-PREFLIGHTING MODE) ===');
+    console.log('🎨 === INITIALIZING CONFIGURATION UI ===');
     console.log('🔧 Full config:', JSON.stringify(this.config, null, 2));
 
     // Set all form elements to match the default configuration
@@ -241,7 +218,7 @@ class VoiceAgent {
     this.elements.eotTimeout.value = this.config.eot_timeout_ms;
     this.elements.timeoutValue.textContent = this.config.eot_timeout_ms;
 
-    console.log('✅ UI initialized with simplified configuration (non-preflighting only)');
+    console.log('✅ UI initialized with configuration');
 
     // Send initial config to server
     this.sendConfigUpdate();

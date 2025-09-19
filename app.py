@@ -30,8 +30,8 @@ from config import (
     DEEPGRAM_API_KEY, OPENAI_API_KEY,
     FLUX_URL, FLUX_ENCODING, SAMPLE_RATE,
     OPENAI_LLM_MODEL, DEEPGRAM_TTS_MODEL,
-    PREFLIGHT_THRESHOLD, EOT_THRESHOLD, EOT_TIMEOUT_MS,
-    EXTRA_LLM_LATENCY_SECONDS, SYSTEM_PROMPT,
+    EOT_THRESHOLD, EOT_TIMEOUT_MS,
+    SYSTEM_PROMPT,
     TTS_MODEL_OPTIONS, LLM_MODEL_OPTIONS
 )
 
@@ -84,7 +84,7 @@ async def generate_agent_reply_normal(
     session_id: str,
     config: Dict[str, Any]
 ) -> Optional[bytes]:
-    """Generate agent reply using normal (non-preflighting) approach."""
+    """Generate agent reply using the configured LLM."""
 
     logger.info(f"Session {session_id}: *** INSIDE generate_agent_reply_normal() ***")
     logger.info(f"Session {session_id}: User speech: '{user_speech}'")
@@ -122,7 +122,7 @@ async def generate_agent_reply_normal(
             'timestamp': datetime.now().isoformat()
         }, room=session_id)
 
-        # Generate TTS audio (similar to preflighting but simpler)
+        # Generate TTS audio
         logger.info(f"Session {session_id}: About to generate TTS audio for: '{agent_message}'")
         tts_result = await generate_tts_audio(agent_message, session_id, config)
         logger.info(f"Session {session_id}: TTS generation result: {len(tts_result) if tts_result else 0} bytes")
@@ -283,11 +283,9 @@ def handle_connect():
         'state': ConversationState.IDLE,
         'messages': [],
         'config': {
-            'use_preflighting': True,
             'sample_rate': SAMPLE_RATE,
             'llm_model': OPENAI_LLM_MODEL,
             'tts_model': DEEPGRAM_TTS_MODEL,
-            'preflight_threshold': PREFLIGHT_THRESHOLD,
             'eot_threshold': EOT_THRESHOLD,
             'eot_timeout_ms': EOT_TIMEOUT_MS,
         },
@@ -540,19 +538,10 @@ async def handle_flux_responses(session_id: str, websocket):
                             'timestamp': datetime.now().isoformat()
                         }, room=session_id)
 
-                    elif event == 'Preflight':
-                        # Preflighting request from Flux
-                        if config['use_preflighting']:
-                            tentative_transcript = data.get('transcript', '')
-                            logger.info(f"Session {session_id}: Preflight request for: '{tentative_transcript}'")
-
-                            # Generate preflight response
-                            asyncio.create_task(handle_preflight_request(session_id, tentative_transcript, config))
-
                     elif event == 'EndOfTurn':
                         # User finished speaking
                         transcript = data.get('transcript', '')
-                        logger.info(f"Session {session_id}: EndOfTurn event - transcript: '{transcript}', use_preflighting: {config['use_preflighting']}")
+                        logger.info(f"Session {session_id}: EndOfTurn event - transcript: '{transcript}'")
 
                         if transcript.strip():
                             logger.info(f"Session {session_id}: User said: '{transcript}' - PROCESSING USER SPEECH")
@@ -566,12 +555,9 @@ async def handle_flux_responses(session_id: str, websocket):
                                 'timestamp': datetime.now().isoformat()
                             }, room=session_id)
 
-                            # Generate and send agent response (for non-preflighting mode)
-                            if not config['use_preflighting']:
-                                logger.info(f"Session {session_id}: NON-PREFLIGHTING MODE - Starting LLM generation task")
-                                asyncio.create_task(generate_and_send_response(session_id, transcript, config))
-                            else:
-                                logger.info(f"Session {session_id}: PREFLIGHTING MODE - Should use preflight response (if available)")
+                            # Generate and send agent response
+                            logger.info(f"Session {session_id}: Starting LLM generation task")
+                            asyncio.create_task(generate_and_send_response(session_id, transcript, config))
                         else:
                             logger.warning(f"Session {session_id}: EndOfTurn event but transcript is empty!")
 
@@ -601,7 +587,7 @@ async def handle_flux_responses(session_id: str, websocket):
         logger.error(f"Session {session_id}: Error in Flux response handler: {e}")
 
 async def generate_and_send_response(session_id: str, user_speech: str, config: Dict[str, Any]):
-    """Generate and send agent response (non-preflighting mode)."""
+    """Generate and send agent response."""
 
     logger.info(f"Session {session_id}: *** STARTING AGENT RESPONSE GENERATION ***")
     logger.info(f"Session {session_id}: User speech: '{user_speech}'")
@@ -654,7 +640,7 @@ async def generate_and_send_response(session_id: str, user_speech: str, config: 
         }, room=session_id)
 
 async def connect_to_flux(session_id: str):
-    """Connect to Flux WebSocket and handle voice conversation (non-preflighting mode)."""
+    """Connect to Flux WebSocket and handle voice conversation."""
 
     if session_id not in active_sessions:
         logger.error(f"Session {session_id}: Session not found")
@@ -665,7 +651,7 @@ async def connect_to_flux(session_id: str):
 
     logger.info(f"Session {session_id}: Connecting to Flux WebSocket")
 
-    # Build Flux WebSocket URL (non-preflighting mode)
+    # Build Flux WebSocket URL
     flux_url = (
         f"{FLUX_URL}?model=flux-general-en&sample_rate={config['sample_rate']}&encoding={FLUX_ENCODING}"
         f"&eot_threshold={config['eot_threshold']}&eot_timeout_ms={config['eot_timeout_ms']}"
@@ -698,7 +684,7 @@ async def connect_to_flux(session_id: str):
         }, room=session_id)
 
 async def handle_flux_responses(session_id: str, websocket, config: Dict[str, Any]):
-    """Handle incoming messages from Flux WebSocket (non-preflighting mode)."""
+    """Handle incoming messages from Flux WebSocket."""
 
     session = active_sessions[session_id]
 
@@ -741,7 +727,7 @@ async def handle_flux_responses(session_id: str, websocket, config: Dict[str, An
                             'timestamp': datetime.now().isoformat()
                         }, room=session_id)
 
-                        # Generate agent response (non-preflighting mode)
+                        # Generate agent response
                         asyncio.create_task(generate_and_send_response(session_id, transcript, config))
 
                 elif event == 'Update':
