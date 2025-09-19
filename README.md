@@ -135,6 +135,26 @@ The application provides comprehensive debug logging:
 4. **Choose appropriate models** based on speed vs quality needs
 
 
+## 📊 What You'll See Working
 
+When everything is working correctly, you should see:
+
+**🖥️ Browser Interface:**
+- Audio, Agent, Model and Flux settings
+- Real-time conversation history as you speak
+- FLUX Events log showing JSON responses from the API
+- Audio output from Agent
+
+**💻 Server Logs:**
+- Connection success to Deepgram FLUX API
+- Connection success to Open AI Chat completions API
+- Connection success to Depgram TTS completions API
+- Audio chunks being forwarded (1280 bytes each)
+- FLUX responses with TurnInfo events
+- Message type debugging information
+- Initial Config settings and changes
+- Agent & User interactions
+
+![ui_image](./images/ui-example.png)
 
 
