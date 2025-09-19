@@ -1,0 +1,18 @@
+# Deepgram Flux Voice Agent - Core Dependencies
+# Install with: pip install -r requirements.txt
+
+# Web Framework
+flask>=3.1.0
+flask-socketio>=5.5.0
+python-socketio>=5.13.0
+
+# WebSocket Support
+websockets>=15.0.0
+
+# API SDKs
+deepgram-sdk>=4.5.0
+openai>=1.92.0
+
+# Async Support
+eventlet>=0.40.0
+asyncio-mqtt>=0.16.0
