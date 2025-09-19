@@ -2,6 +2,19 @@
 
 A real-time voice conversation application powered by Deepgram Flux API, OpenAI, and Deepgram TTS. Features a beautiful web interface built with Deepgram's design system.
 
+## 🎯 What is FLUX?
+
+FLUX is Deepgram's breakthrough conversational AI model that understands **turn-taking dynamics** - not just transcribing words, but knowing when to listen, when to think, and when to speak. Perfect for building voice agents and interactive applications.
+
+## API Preview Mode
+
+This demo currently uses the Flux Preview URL: `wss://api.preview.deepgram.com/v2/listen.` Once Flux is GA, it will be changed to use a Production URL.
+
+
+## Demo Browser Support
+
+This demo will run in Chrome and Safari browsers only. No Firefox support.
+
 ## Features
 
 - **Real-time voice conversations** with AI assistant
