@@ -70,8 +70,6 @@ The application provides configuration options through the web interface:
 - **Voice Model**: Select Deepgram TTS voice.
 
 ### Advanced Settings
-- **Preflighting Mode**: Enable/disable preflighting for faster responses
-- **Preflight Threshold**: Confidence level for triggering preflighting (0.2-0.9)
 - **End-of-Turn Threshold**: Confidence level for finalizing turn completion (0.5-0.9)
 - **Turn Timeout**: Maximum wait time for turn completion (1000-10000ms)
 
@@ -83,7 +81,6 @@ The application comes with optimized defaults:
 SAMPLE_RATE = 16000
 OPENAI_LLM_MODEL = "gpt-4o-mini"
 DEEPGRAM_TTS_MODEL = "aura-2-phoebe-en"
-PREFLIGHT_THRESHOLD = 0.3
 EOT_THRESHOLD = 0.8
 EOT_TIMEOUT_MS = 3000
 ```
@@ -99,15 +96,18 @@ EOT_TIMEOUT_MS = 3000
 
 ## Preflighting vs Non-Preflighting
 
-### Preflighting Mode (Default)
+### Non-Preflighting Mode (Default)
+- **Conservative approach**: Waits for complete utterances before responding
+- **Fewer LLM calls**: More cost-effective for longer conversations
+- **Best for**: Cost-conscious usage, longer monologues
+
+### Preflighting Mode
+> Not available yet.
+
 - **Faster responses**: AI starts generating responses before you finish speaking
 - **More LLM calls**: Uses more API credits but provides snappier conversations
 - **Best for**: Interactive conversations, demos, real-time use
 
-### Non-Preflighting Mode
-- **Conservative approach**: Waits for complete utterances before responding
-- **Fewer LLM calls**: More cost-effective for longer conversations
-- **Best for**: Cost-conscious usage, longer monologues
 
 ## Troubleshooting
 

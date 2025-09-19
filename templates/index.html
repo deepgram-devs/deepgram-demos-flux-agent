@@ -231,34 +231,11 @@
                     </h3>
 
                     <div class="dg-grid-mobile-stack">
-                        <!-- Preflighting Toggle -->
-                        <div class="form__group">
-                            <div class="form__checkbox">
-                                <input type="checkbox" class="form__input" id="use-preflighting">
-                                <label class="form__label" for="use-preflighting">
-                                    <i class="fas fa-rocket"></i>
-                                    Enable Preflighting (Faster Responses)
-                                </label>
-                            </div>
-                            <small class="form__hint">Preflighting starts generating responses before the user finishes speaking</small>
-                        </div>
-
-                        <!-- Preflight Threshold -->
-                        <div class="form__group" id="preflight-threshold-group">
-                            <label class="form__label" for="preflight-threshold">
-                                <i class="fas fa-tachometer-alt"></i>
-                                Preflight Threshold: <span id="preflight-value">0.3</span>
-                            </label>
-                            <input type="range" class="form__input" id="preflight-threshold"
-                                   min="0.2" max="0.9" step="0.1" value="0.3"
-                                   style="width: 100%; accent-color: var(--dg-primary);">
-                            <small class="form__hint">Lower = faster responses, Higher = fewer false triggers</small>
-                        </div>
 
                         <!-- EOT Threshold -->
                         <div class="form__group">
                             <label class="form__label" for="eot-threshold">
-                                <i class="fas fa-stop"></i>
+                                <i class="fas fa-recycle"></i>
                                 End-of-Turn Threshold: <span id="eot-value">0.8</span>
                             </label>
                             <input type="range" class="form__input" id="eot-threshold"

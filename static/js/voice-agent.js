@@ -5,6 +5,7 @@
 
 class VoiceAgent {
   constructor() {
+    console.log('🚀 VoiceAgent constructor called');
     this.socket = null;
     this.mediaStream = null;
     this.audioContext = null;
@@ -18,14 +19,13 @@ class VoiceAgent {
 
     // Configuration
     this.config = {
-      use_preflighting: false,  // Default to non-preflighting mode (simpler)
       sample_rate: 16000,
       llm_model: 'gpt-4o-mini',
       tts_model: 'aura-2-phoebe-en',
-      preflight_threshold: 0.3,
       eot_threshold: 0.8,
       eot_timeout_ms: 3000
     };
+    console.log('📋 Initial configuration in constructor:', JSON.stringify(this.config, null, 2));
 
     // UI elements
     this.elements = {};
@@ -42,14 +42,20 @@ class VoiceAgent {
   }
 
   async init() {
-    console.log('Initializing Deepgram Flux Voice Agent...');
+    console.log('🔧 Initializing Deepgram Flux Voice Agent...');
+    console.log('⚙️ Config at start of init():', JSON.stringify(this.config, null, 2));
 
     try {
       // Get UI elements
+      console.log('📱 Getting UI elements...');
       this.getUIElements();
+      console.log('✅ UI elements retrieved');
 
       // Set up event handlers
       this.setupEventHandlers();
+
+      // Initialize UI state based on default configuration
+      this.initializeConfigurationUI();
 
       // Load available microphones
       await this.loadMicrophones();
@@ -61,14 +67,20 @@ class VoiceAgent {
       this.updateStatus('idle', 'Ready to start');
       this.updateInstructions('Select your microphone and configure settings, then click "Start Conversation"');
 
+      console.log('🎉 === VoiceAgent INITIALIZATION COMPLETE ===');
+      console.log('🔧 Final app state - use_preflighting:', this.config.use_preflighting);
+      console.log('🔧 Final checkbox state:', this.elements.usePreflighting?.checked);
+
     } catch (error) {
-      console.error('Initialization failed:', error);
+      console.error('❌ Initialization failed:', error);
       this.updateStatus('error', 'Initialization failed');
       this.addDebugMessage('ERROR', `Initialization failed: ${error.message}`);
     }
   }
 
   getUIElements() {
+    console.log('🎯 Getting UI elements...');
+
     // Control buttons
     this.elements.startBtn = document.getElementById('start-btn');
     this.elements.stopBtn = document.getElementById('stop-btn');
@@ -80,10 +92,12 @@ class VoiceAgent {
     this.elements.sampleRate = document.getElementById('sample-rate');
     this.elements.llmModel = document.getElementById('llm-model');
     this.elements.ttsModel = document.getElementById('tts-model');
-    this.elements.usePreflighting = document.getElementById('use-preflighting');
-    this.elements.preflightThreshold = document.getElementById('preflight-threshold');
     this.elements.eotThreshold = document.getElementById('eot-threshold');
+    this.elements.eotValue = document.getElementById('eot-value');
     this.elements.eotTimeout = document.getElementById('eot-timeout');
+    this.elements.timeoutValue = document.getElementById('timeout-value');
+
+    console.log('✅ Configuration elements loaded (non-preflighting mode)');
 
     // Display elements
     this.elements.statusIndicator = document.getElementById('status-indicator');
@@ -161,6 +175,76 @@ class VoiceAgent {
 
     // Page cleanup
     window.addEventListener('beforeunload', () => this.cleanup());
+  }
+
+  setupEventHandlers() {
+    console.log('🎯 Setting up event handlers...');
+
+    // Control buttons
+    this.elements.startBtn.addEventListener('click', () => this.startConversation());
+    this.elements.stopBtn.addEventListener('click', () => this.stopConversation());
+    this.elements.clearLogBtn.addEventListener('click', () => this.clearConversationLog());
+    this.elements.exportLogBtn.addEventListener('click', () => this.exportConversation());
+
+    // Configuration changes
+    this.elements.microphoneSelect.addEventListener('change', (e) => {
+      this.selectedDeviceId = e.target.value;
+      this.updateStartButtonState();
+    });
+
+    this.elements.sampleRate.addEventListener('change', (e) => {
+      this.config.sample_rate = parseInt(e.target.value);
+      this.sendConfigUpdate();
+    });
+
+    this.elements.llmModel.addEventListener('change', (e) => {
+      this.config.llm_model = e.target.value;
+      this.sendConfigUpdate();
+    });
+
+    this.elements.ttsModel.addEventListener('change', (e) => {
+      this.config.tts_model = e.target.value;
+      this.sendConfigUpdate();
+    });
+
+    // Range sliders
+    this.elements.eotThreshold.addEventListener('input', (e) => {
+      const value = parseFloat(e.target.value);
+      this.config.eot_threshold = value;
+      this.elements.eotValue.textContent = value.toFixed(1);
+      this.sendConfigUpdate();
+    });
+
+    this.elements.eotTimeout.addEventListener('input', (e) => {
+      const value = parseInt(e.target.value);
+      this.config.eot_timeout_ms = value;
+      this.elements.timeoutValue.textContent = value;
+      this.sendConfigUpdate();
+    });
+
+    console.log('✅ Event handlers set up successfully');
+  }
+
+  initializeConfigurationUI() {
+    console.log('🎨 === INITIALIZING CONFIGURATION UI (NON-PREFLIGHTING MODE) ===');
+    console.log('🔧 Full config:', JSON.stringify(this.config, null, 2));
+
+    // Set all form elements to match the default configuration
+    this.elements.sampleRate.value = this.config.sample_rate;
+    this.elements.llmModel.value = this.config.llm_model;
+    this.elements.ttsModel.value = this.config.tts_model;
+
+    // Set slider values and their display text
+    this.elements.eotThreshold.value = this.config.eot_threshold;
+    this.elements.eotValue.textContent = this.config.eot_threshold.toFixed(1);
+
+    this.elements.eotTimeout.value = this.config.eot_timeout_ms;
+    this.elements.timeoutValue.textContent = this.config.eot_timeout_ms;
+
+    console.log('✅ UI initialized with simplified configuration (non-preflighting only)');
+
+    // Send initial config to server
+    this.sendConfigUpdate();
   }
 
   async loadMicrophones() {
