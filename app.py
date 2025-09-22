@@ -354,28 +354,6 @@ def handle_start_conversation():
         'config': session['config']
     })
 
-@socketio.on('audio_data')
-def handle_audio_data(data):
-    """Handle incoming audio data from client."""
-    session_id = request.sid
-
-    if session_id not in active_sessions:
-        return
-
-    session = active_sessions[session_id]
-
-    if not session.get('conversation_active', False):
-        return
-
-    # Initialize audio buffer if not exists
-    if 'audio_buffer' not in session:
-        session['audio_buffer'] = []
-
-    # Convert audio data to bytes and add to buffer
-    if isinstance(data, list):
-        # Convert JavaScript array to bytes
-        audio_bytes = struct.pack(f'{len(data)}h', *data)
-        session['audio_buffer'].append(audio_bytes)
 
 @socketio.on('stop_conversation')
 def handle_stop_conversation():
@@ -390,8 +368,15 @@ def handle_stop_conversation():
 
         # Close Flux WebSocket if active
         if session.get('flux_ws'):
-            # Signal to close the WebSocket
+            # Signal to close the WebSocket immediately
             session['should_close'] = True
+            logger.info(f"Session {session_id}: Signaled WebSocket to close gracefully")
+
+        # Clear audio buffer
+        if 'audio_buffer' in session:
+            session['audio_buffer'].clear()
+
+        logger.info(f"Session {session_id}: Conversation stopped and cleaned up")
 
     emit('conversation_stopped', {
         'timestamp': datetime.now().isoformat()
@@ -424,6 +409,7 @@ def handle_audio_data(data):
         audio_bytes = bytes(data)
 
     session['audio_buffer'].append(audio_bytes)
+
 
 async def connect_to_flux(session_id: str):
     """Connect to Deepgram Flux WebSocket and handle the conversation."""
@@ -460,12 +446,26 @@ async def connect_to_flux(session_id: str):
             except Exception as e:
                 logger.error(f"Session {session_id}: Flux connection error: {e}")
             finally:
-                audio_task.cancel()
-                response_task.cancel()
-                logger.info(f"Session {session_id}: Flux connection closed")
+                # Cancel tasks immediately to stop processing
+                if not audio_task.done():
+                    logger.info(f"Session {session_id}: Cancelling audio task")
+                    audio_task.cancel()
+                if not response_task.done():
+                    logger.info(f"Session {session_id}: Cancelling response task")
+                    response_task.cancel()
 
-                # Clean up session WebSocket reference
+                # Wait for tasks to finish cancellation gracefully
+                try:
+                    await asyncio.gather(audio_task, response_task, return_exceptions=True)
+                    logger.info(f"Session {session_id}: Both tasks completed/cancelled")
+                except Exception as cleanup_error:
+                    logger.warning(f"Session {session_id}: Task cleanup error: {cleanup_error}")
+
+                # Clean up session state
                 session['flux_ws'] = None
+                session['should_close'] = False  # Reset the flag
+
+                logger.info(f"Session {session_id}: Flux WebSocket connection fully closed and cleaned up")
 
                 # Notify client of disconnection
                 socketio.emit('flux_disconnected',
@@ -496,8 +496,14 @@ async def send_audio_to_flux(session_id: str, websocket):
 
             await asyncio.sleep(0.01)  # Small delay to prevent busy loop
 
+        # If we exit the loop due to should_close flag
+        if session.get('should_close', False):
+            logger.info(f"Session {session_id}: Audio transmission stopping due to close signal")
+
     except Exception as e:
         logger.error(f"Session {session_id}: Error sending audio to Flux: {e}")
+    finally:
+        logger.info(f"Session {session_id}: Audio transmission to Flux ended")
 
 async def handle_flux_responses(session_id: str, websocket):
     """Handle responses from Flux WebSocket."""
@@ -509,7 +515,14 @@ async def handle_flux_responses(session_id: str, websocket):
 
     try:
         async for message in websocket:
+            # Check if we should close the connection
             if session.get('should_close', False):
+                logger.info(f"Session {session_id}: Response handler stopping due to close signal")
+                break
+
+            # Also check if conversation is no longer active
+            if not session.get('conversation_active', False):
+                logger.info(f"Session {session_id}: Response handler stopping - conversation inactive")
                 break
 
             try:
@@ -531,7 +544,7 @@ async def handle_flux_responses(session_id: str, websocket):
                     event = data.get('event')
                     logger.debug(f"Session {session_id}: TurnInfo event: {event}")
 
-                    if event in ['StartOfTurn', 'SpeechResumed']:
+                    if event == 'StartOfTurn':
                         logger.info(f"Session {session_id}: {event} - User started speaking")
                         session['state'] = ConversationState.LISTENING
                         socketio.emit('speech_started', {
@@ -585,6 +598,8 @@ async def handle_flux_responses(session_id: str, websocket):
 
     except Exception as e:
         logger.error(f"Session {session_id}: Error in Flux response handler: {e}")
+    finally:
+        logger.info(f"Session {session_id}: Flux response handler ended")
 
 async def generate_and_send_response(session_id: str, user_speech: str, config: Dict[str, Any]):
     """Generate and send agent response."""
@@ -639,129 +654,6 @@ async def generate_and_send_response(session_id: str, user_speech: str, config: 
             'timestamp': datetime.now().isoformat()
         }, room=session_id)
 
-async def connect_to_flux(session_id: str):
-    """Connect to Flux WebSocket and handle voice conversation."""
-
-    if session_id not in active_sessions:
-        logger.error(f"Session {session_id}: Session not found")
-        return
-
-    session = active_sessions[session_id]
-    config = session['config']
-
-    logger.info(f"Session {session_id}: Connecting to Flux WebSocket")
-
-    # Build Flux WebSocket URL
-    flux_url = (
-        f"{FLUX_URL}?model=flux-general-en&sample_rate={config['sample_rate']}&encoding={FLUX_ENCODING}"
-        f"&eot_threshold={config['eot_threshold']}&eot_timeout_ms={config['eot_timeout_ms']}"
-    )
-
-    headers = {"Authorization": f"Token {DEEPGRAM_API_KEY}"}
-
-    try:
-        async with websockets.connect(flux_url, additional_headers=headers) as websocket:
-            logger.info(f"Session {session_id}: Connected to Flux WebSocket")
-
-            # Store websocket reference
-            session['flux_ws'] = websocket
-
-            socketio.emit('conversation_started', {
-                'timestamp': datetime.now().isoformat()
-            }, room=session_id)
-
-            # Start audio transmission and message handling
-            await asyncio.gather(
-                send_audio_to_flux(session_id, websocket),
-                handle_flux_responses(session_id, websocket, config)
-            )
-
-    except Exception as e:
-        logger.error(f"Session {session_id}: Failed to connect to Flux: {e}")
-        socketio.emit('conversation_error', {
-            'error': f"Failed to connect to Flux: {str(e)}",
-            'timestamp': datetime.now().isoformat()
-        }, room=session_id)
-
-async def handle_flux_responses(session_id: str, websocket, config: Dict[str, Any]):
-    """Handle incoming messages from Flux WebSocket."""
-
-    session = active_sessions[session_id]
-
-    try:
-        async for message in websocket:
-            if not session.get('conversation_active', False):
-                break
-
-            data = json.loads(message)
-            logger.debug(f"Session {session_id}: Flux message: {data.get('type')}")
-
-            if data.get('type') == 'receiveConnected':
-                logger.info(f"Session {session_id}: Connected to Flux - ready to stream audio")
-
-            elif data.get('type') == 'receiveFatalError':
-                logger.error(f"Session {session_id}: Fatal error: {data.get('error', 'Unknown error')}")
-                socketio.emit('conversation_error', {
-                    'error': f"Flux fatal error: {data.get('error', 'Unknown error')}",
-                    'timestamp': datetime.now().isoformat()
-                }, room=session_id)
-
-            elif data.get('type') == 'TurnInfo':
-                event = data.get('event')
-
-                if event in ['StartOfTurn', 'SpeechResumed']:
-                    logger.info(f"Session {session_id}: {event} - User started speaking")
-                    session['state'] = ConversationState.LISTENING
-                    socketio.emit('speech_started', {
-                        'timestamp': datetime.now().isoformat()
-                    }, room=session_id)
-
-                elif event == 'EndOfTurn':
-                    transcript = data.get('transcript', '')
-                    logger.info(f"Session {session_id}: EndOfTurn - transcript: '{transcript}'")
-
-                    if transcript.strip():
-                        session['messages'].append({"role": "user", "content": transcript})
-                        socketio.emit('user_speech', {
-                            'transcript': transcript,
-                            'timestamp': datetime.now().isoformat()
-                        }, room=session_id)
-
-                        # Generate agent response
-                        asyncio.create_task(generate_and_send_response(session_id, transcript, config))
-
-                elif event == 'Update':
-                    transcript = data.get('transcript', '')
-                    if transcript.strip():
-                        socketio.emit('interim_transcript', {
-                            'transcript': transcript,
-                            'is_final': False,
-                            'timestamp': datetime.now().isoformat()
-                        }, room=session_id)
-
-    except websockets.exceptions.ConnectionClosed:
-        logger.info(f"Session {session_id}: Flux WebSocket connection closed")
-    except Exception as e:
-        logger.error(f"Session {session_id}: Error in Flux message handling: {e}")
-
-async def send_audio_to_flux(session_id: str, websocket):
-    """Send audio data to Flux WebSocket."""
-
-    session = active_sessions[session_id]
-    logger.info(f"Session {session_id}: Starting audio transmission to Flux")
-
-    try:
-        while session.get('conversation_active', False):
-            # Check if there's audio data in buffer
-            if session.get('audio_buffer'):
-                while session['audio_buffer']:
-                    audio_data = session['audio_buffer'].pop(0)
-                    await websocket.send(audio_data)
-
-            await asyncio.sleep(0.01)  # Small delay to prevent busy waiting
-
-    except Exception as e:
-        logger.error(f"Session {session_id}: Error sending audio to Flux: {e}")
 
 if __name__ == '__main__':
     try:

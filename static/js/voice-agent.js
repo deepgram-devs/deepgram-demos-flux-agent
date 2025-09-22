@@ -319,14 +319,23 @@ class VoiceAgent {
     });
 
     this.socket.on('conversation_stopped', (data) => {
-      console.log('Conversation stopped:', data);
+      console.log('🛑 Server confirmed conversation stopped:', data);
+
+      // Ensure all local cleanup is done
       this.isConversationActive = false;
+      this.isRecording = false;
+      this.isPlayingAudio = false;
+
+      // Clear any remaining audio queue
+      this.audioQueue = [];
+
+      // Update UI
       this.updateStatus('idle', 'Conversation stopped');
       this.updateControlButtons();
       this.elements.interimSection.style.display = 'none';
-      this.updateInstructions('Conversation stopped. Click "Start Conversation" to begin again.');
+      this.updateInstructions('Conversation stopped completely. Click "Start Conversation" to begin again.');
       this.addConversationMessage('system', 'Conversation ended', data.timestamp);
-      this.addDebugMessage('FLUX', 'Conversation stopped');
+      this.addDebugMessage('FLUX', 'Server confirmed conversation stopped');
     });
 
     this.socket.on('user_speech', (data) => {
@@ -379,11 +388,22 @@ class VoiceAgent {
     });
 
     this.socket.on('flux_disconnected', (data) => {
-      console.log('Flux WebSocket disconnected');
+      console.log('🔌 Flux WebSocket disconnected');
+
+      // Force cleanup of all conversation-related state
       this.isConversationActive = false;
+      this.isRecording = false;
+      this.isPlayingAudio = false;
+
+      // Clear audio queue
+      this.audioQueue = [];
+
+      // Update UI to reflect disconnected state
       this.updateStatus('idle', 'Flux disconnected');
       this.updateControlButtons();
-      this.addDebugMessage('FLUX', 'WebSocket disconnected');
+      this.elements.interimSection.style.display = 'none';
+      this.updateInstructions('Connection to voice service lost. You can start a new conversation.');
+      this.addDebugMessage('FLUX', 'WebSocket disconnected - conversation ended');
     });
 
     this.socket.on('conversation_error', (data) => {
@@ -473,7 +493,13 @@ class VoiceAgent {
 
     this.processor.onaudioprocess = (e) => {
       const now = Date.now();
-      if (this.socket?.connected && this.isConversationActive && now - lastSendTime >= sendInterval) {
+
+      // Check all necessary conditions before processing audio
+      if (this.socket?.connected &&
+        this.isConversationActive &&
+        this.isRecording &&
+        now - lastSendTime >= sendInterval) {
+
         const inputData = e.inputBuffer.getChannelData(0);
         const pcmData = this.convertFloatToPcm(inputData);
 
@@ -496,34 +522,74 @@ class VoiceAgent {
   }
 
   stopConversation() {
+    console.log('🛑 Stopping conversation - beginning cleanup...');
+
+    // Immediately set flags to stop processing
     this.isRecording = false;
+    this.isConversationActive = false;
+    this.isPlayingAudio = false;
 
-    // Stop audio processing
+    // Stop audio processing completely
     if (this.processor) {
-      this.processor.disconnect();
-      this.processor = null;
+      console.log('🔇 Disconnecting audio processor...');
+      try {
+        this.processor.disconnect();
+        this.processor.onaudioprocess = null; // Remove event handler
+        this.processor = null;
+      } catch (error) {
+        console.warn('Warning: Error disconnecting processor:', error);
+      }
     }
 
+    // Stop all media stream tracks
     if (this.mediaStream) {
-      this.mediaStream.getTracks().forEach(track => track.stop());
-      this.mediaStream = null;
+      console.log('🎤 Stopping media stream tracks...');
+      try {
+        this.mediaStream.getTracks().forEach(track => {
+          track.stop();
+          console.log(`Stopped track: ${track.kind} - ${track.label}`);
+        });
+        this.mediaStream = null;
+      } catch (error) {
+        console.warn('Warning: Error stopping media tracks:', error);
+      }
     }
 
+    // Close audio context completely
     if (this.audioContext) {
-      this.audioContext.close();
-      this.audioContext = null;
+      console.log('🔊 Closing audio context...');
+      try {
+        // Cancel any pending operations
+        if (this.audioContext.state !== 'closed') {
+          this.audioContext.close().then(() => {
+            console.log('Audio context closed successfully');
+          }).catch(error => {
+            console.warn('Warning: Error closing audio context:', error);
+          });
+        }
+        this.audioContext = null;
+      } catch (error) {
+        console.warn('Warning: Error with audio context cleanup:', error);
+      }
     }
 
     // Stop conversation on server
     if (this.socket && this.isConnected) {
+      console.log('📡 Sending stop_conversation to server...');
       this.socket.emit('stop_conversation');
     }
 
-    // Clear audio queue
+    // Clear all audio queues and buffers
     this.audioQueue = [];
-    this.isPlayingAudio = false;
 
-    this.addDebugMessage('AUDIO', 'Stopped audio capture');
+    // Update UI to reflect stopped state
+    this.updateStatus('idle', 'Conversation stopped');
+    this.updateControlButtons();
+    this.elements.interimSection.style.display = 'none';
+    this.updateInstructions('Conversation stopped completely. Click "Start Conversation" to begin again.');
+
+    console.log('✅ Conversation stop cleanup completed');
+    this.addDebugMessage('AUDIO', 'Conversation stopped - all audio processing cleaned up');
   }
 
   addAudioToQueue(audioData) {
