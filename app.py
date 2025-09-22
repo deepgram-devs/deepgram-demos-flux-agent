@@ -531,7 +531,7 @@ async def handle_flux_responses(session_id: str, websocket):
                     event = data.get('event')
                     logger.debug(f"Session {session_id}: TurnInfo event: {event}")
 
-                    if event in ['StartOfTurn', 'SpeechResumed']:
+                    if event == 'StartOfTurn':
                         logger.info(f"Session {session_id}: {event} - User started speaking")
                         session['state'] = ConversationState.LISTENING
                         socketio.emit('speech_started', {
@@ -654,7 +654,7 @@ async def connect_to_flux(session_id: str):
     # Build Flux WebSocket URL
     flux_url = (
         f"{FLUX_URL}?model=flux-general-en&sample_rate={config['sample_rate']}&encoding={FLUX_ENCODING}"
-        f"&eot_threshold={config['eot_threshold']}&eot_timeout_ms={config['eot_timeout_ms']}"
+        f"&eot_timeout_ms={config['eot_timeout_ms']}"
     )
 
     headers = {"Authorization": f"Token {DEEPGRAM_API_KEY}"}
@@ -709,7 +709,7 @@ async def handle_flux_responses(session_id: str, websocket, config: Dict[str, An
             elif data.get('type') == 'TurnInfo':
                 event = data.get('event')
 
-                if event in ['StartOfTurn', 'SpeechResumed']:
+                if event == 'StartOfTurn':
                     logger.info(f"Session {session_id}: {event} - User started speaking")
                     session['state'] = ConversationState.LISTENING
                     socketio.emit('speech_started', {
