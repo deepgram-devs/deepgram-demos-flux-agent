@@ -22,9 +22,9 @@ DEEPGRAM_API_KEY = os.getenv("DEEPGRAM_API_KEY")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
 # Server Configuration
-HOST = "127.0.0.1"
+HOST = "0.0.0.0"  # Bind to all interfaces for Fly.io deployment
 PORT = 3000
-DEBUG = True
+DEBUG = True  # Enable debug mode for local development
 
 # Conversation System Prompts
 SYSTEM_PROMPT = """You are a helpful voice assistant powered by Deepgram Flux and OpenAI.

@@ -107,6 +107,24 @@ EOT_TIMEOUT_MS = 3000
 5. **Monitor Progress**: Watch the conversation log and debug information
 6. **Stop When Done**: Click "Stop Conversation" to end the session
 
+## 🚀 Deployment
+
+This demo is containerized and ready for deployment to any platform that supports Docker.
+
+### Deployment Files Included
+- **`Dockerfile`**: Python Flask container setup
+- **`fly.toml`**: Fly.io configuration (can be adapted for other platforms)
+- **`.dockerignore`**: Optimized for Python projects
+
+### Environment Variables
+- **`DEEPGRAM_API_KEY`**: Your Deepgram API key (required)
+- **`OPENAI_API_KEY`**: Your OpenAI API key (required)
+
+### Production Notes
+- The app binds to `0.0.0.0:3000` for external access
+- Debug mode is enabled by default (set `DEBUG = False` in config.py for production)
+- All static assets are served directly by the Flask application
+
 ## Troubleshooting
 
 ### Common Issues
