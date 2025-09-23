@@ -668,7 +668,8 @@ if __name__ == '__main__':
                     host=HOST,
                     port=PORT,
                     debug=DEBUG,
-                    use_reloader=False)  # Disable reloader to prevent issues with threading
+                    use_reloader=False,  # Disable reloader to prevent issues with threading
+                    allow_unsafe_werkzeug=True)  # Allow development server in production
 
     except Exception as e:
         logger.error(f"Failed to start application: {e}")
