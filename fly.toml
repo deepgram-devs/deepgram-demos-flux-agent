@@ -8,6 +8,9 @@ auto_rollback = true
 
 [build]
 
+[env]
+BASE_PATH = "/flux-agent"
+
 [http_service]
 internal_port = 3000
 auto_stop_machines = "stop"
