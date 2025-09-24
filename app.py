@@ -16,7 +16,7 @@ from enum import Enum, auto
 
 import openai
 import websockets
-from flask import Flask, Blueprint, render_template, request
+from flask import Flask, render_template, request
 from flask_socketio import SocketIO, emit
 from deepgram import (
     DeepgramClient,
@@ -48,8 +48,7 @@ logger = logging.getLogger(__name__)
 app = Flask(__name__, static_url_path=f'{BASE_PATH}/static')
 app.config['SECRET_KEY'] = os.urandom(24)
 
-# Create Blueprint with consistent base path
-bp = Blueprint('flux_agent', __name__, url_prefix=BASE_PATH)
+# No Blueprint needed - using direct route
 
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading', path=f'{BASE_PATH}/socket.io')
 
@@ -269,16 +268,13 @@ async def generate_tts_audio(text: str, session_id: str, config: Dict[str, Any])
         return None
 
 # Flask routes
-@bp.route('/')
+@app.route('/flux-agent/')
 def index():
     """Serve the main application page."""
     return render_template('index.html',
                          tts_models=TTS_MODEL_OPTIONS,
                          llm_models=LLM_MODEL_OPTIONS,
                          base_path=BASE_PATH)
-
-# Register Blueprint
-app.register_blueprint(bp)
 
 # Socket.IO event handlers
 @socketio.on('connect')
