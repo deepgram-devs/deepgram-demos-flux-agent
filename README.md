@@ -71,6 +71,8 @@ python app.py
 
 Open your web browser and navigate to: `http://localhost:3000`
 
+ **Note**: For local development, the app serves at the root path for convenience. In production deployment (Fly.io), it serves under `/flux-agent`.
+
 ## Configuration Options
 
 The application provides configuration options through the web interface:
