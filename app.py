@@ -16,7 +16,7 @@ from enum import Enum, auto
 
 import openai
 import websockets
-from flask import Flask, Blueprint, render_template, request
+from flask import Flask, render_template, request
 from flask_socketio import SocketIO, emit
 from deepgram import (
     DeepgramClient,
@@ -44,15 +44,13 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Flask app setup
-# Handle static path for both local dev (empty BASE_PATH) and production
-static_path = f'{BASE_PATH}/static' if BASE_PATH else '/static'
-app = Flask(__name__, static_url_path=static_path)
+# Handle static path consistently
+app = Flask(__name__, static_url_path=f'{BASE_PATH}/static')
 app.config['SECRET_KEY'] = os.urandom(24)
 
-# Create Blueprint for base path handling (None url_prefix for local dev)
-bp = Blueprint('flux_agent', __name__, url_prefix=BASE_PATH or None)
+# No Blueprint needed - using direct route
 
-socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading')
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading', path=f'{BASE_PATH}/socket.io')
 
 # Global state management
 active_sessions: Dict[str, Dict[str, Any]] = {}
@@ -270,15 +268,13 @@ async def generate_tts_audio(text: str, session_id: str, config: Dict[str, Any])
         return None
 
 # Flask routes
-@bp.route('/')
+@app.route('/flux-agent/')
 def index():
     """Serve the main application page."""
     return render_template('index.html',
                          tts_models=TTS_MODEL_OPTIONS,
-                         llm_models=LLM_MODEL_OPTIONS)
-
-# Register Blueprint
-app.register_blueprint(bp)
+                         llm_models=LLM_MODEL_OPTIONS,
+                         base_path=BASE_PATH)
 
 # Socket.IO event handlers
 @socketio.on('connect')

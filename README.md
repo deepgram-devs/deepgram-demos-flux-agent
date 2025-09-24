@@ -69,9 +69,9 @@ python app.py
 
 ### 5. Open in Browser
 
-Open your web browser and navigate to: `http://localhost:3000`
+Open your web browser and navigate to: `http://localhost:3000/flux-agent`
 
- **Note**: For local development, the app serves at the root path for convenience. In production deployment (Fly.io), it serves under `/flux-agent`.
+ **Note**: The app serves under `/flux-agent` in both local development and production for consistency.
 
 ## Configuration Options
 

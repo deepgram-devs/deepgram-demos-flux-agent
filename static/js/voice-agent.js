@@ -259,6 +259,7 @@ class VoiceAgent {
         if (index === 0) {
           option.selected = true;
           this.selectedDeviceId = device.deviceId;
+          console.log('🎤 Auto-selected microphone:', device.label);
         }
       });
 
@@ -273,15 +274,18 @@ class VoiceAgent {
   }
 
   initSocket() {
-    console.log('Connecting to server...');
+    console.log('🔌 Connecting to server...');
 
-    this.socket = io();
+    // Use the configured Socket.IO path
+    const socketPath = window.FLASK_CONFIG.socketPath;
+    console.log('🔌 Socket.IO path:', socketPath);
+    this.socket = io({ path: socketPath });
 
     this.socket.on('connect', () => {
-      console.log('Connected to server');
+      console.log('✅ Socket.IO Connected to server');
       this.isConnected = true;
       this.updateStatus('idle', 'Connected');
-      this.updateStartButtonState();
+      this.updateStartButtonState(); // This should enable button if mic is ready
       this.addDebugMessage('SOCKET', 'Connected to server');
     });
 
@@ -740,6 +744,16 @@ class VoiceAgent {
 
   updateStartButtonState() {
     const canStart = this.isConnected && this.selectedDeviceId && !this.isConversationActive;
+
+    // PRODUCTION DEBUG - Remove after fixing
+    console.log('🔍 Button Enable Check:', {
+      isConnected: this.isConnected,
+      selectedDeviceId: this.selectedDeviceId,
+      isConversationActive: this.isConversationActive,
+      canStart: canStart,
+      buttonDisabled: !canStart
+    });
+
     this.elements.startBtn.disabled = !canStart;
   }
 
