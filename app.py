@@ -44,15 +44,14 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Flask app setup
-# Handle static path for both local dev (empty BASE_PATH) and production
-static_path = f'{BASE_PATH}/static' if BASE_PATH else '/static'
-app = Flask(__name__, static_url_path=static_path)
+# Handle static path consistently
+app = Flask(__name__, static_url_path=f'{BASE_PATH}/static')
 app.config['SECRET_KEY'] = os.urandom(24)
 
-# Create Blueprint for base path handling (None url_prefix for local dev)
-bp = Blueprint('flux_agent', __name__, url_prefix=BASE_PATH or None)
+# Create Blueprint with consistent base path
+bp = Blueprint('flux_agent', __name__, url_prefix=BASE_PATH)
 
-socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading')
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading', path=f'{BASE_PATH}/socket.io')
 
 # Global state management
 active_sessions: Dict[str, Dict[str, Any]] = {}
@@ -275,7 +274,8 @@ def index():
     """Serve the main application page."""
     return render_template('index.html',
                          tts_models=TTS_MODEL_OPTIONS,
-                         llm_models=LLM_MODEL_OPTIONS)
+                         llm_models=LLM_MODEL_OPTIONS,
+                         base_path=BASE_PATH)
 
 # Register Blueprint
 app.register_blueprint(bp)

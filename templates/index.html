@@ -335,6 +335,12 @@
     </div>
 
     <!-- JavaScript -->
+    <script>
+        // Pass configuration to JavaScript
+        window.FLASK_CONFIG = {
+            socketPath: "{{ base_path }}/socket.io"
+        };
+    </script>
     <script src="{{ url_for('static', filename='js/voice-agent.js') }}"></script>
 </body>
 </html>

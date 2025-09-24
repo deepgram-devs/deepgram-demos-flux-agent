@@ -26,8 +26,8 @@ HOST = "0.0.0.0"  # Bind to all interfaces for Fly.io deployment
 PORT = 3000
 DEBUG = True  # Enable debug mode for local development
 
-# Base path for sub-path deployment (empty for local dev, /flux-agent for production)
-BASE_PATH = os.getenv("BASE_PATH", "")
+# Base path for consistent routing in both local dev and production
+BASE_PATH = os.getenv("BASE_PATH", "/flux-agent")
 
 # Conversation System Prompts
 SYSTEM_PROMPT = """You are a helpful voice assistant powered by Deepgram Flux and OpenAI.
