@@ -736,6 +736,15 @@ class VoiceAgent {
   updateStatus(state, text) {
     this.elements.statusIndicator.className = `status-indicator ${state}`;
     this.elements.statusText.textContent = text;
+
+    // Update the status button color by changing its class
+    const statusButton = document.getElementById('connection-status');
+    if (statusButton) {
+      // Remove any existing status classes
+      statusButton.classList.remove('status-idle', 'status-listening', 'status-processing', 'status-speaking', 'status-error');
+      // Add the new status class
+      statusButton.classList.add(`status-${state}`);
+    }
   }
 
   updateInstructions(text) {

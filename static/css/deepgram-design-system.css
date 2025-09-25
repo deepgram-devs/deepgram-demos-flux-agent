@@ -857,11 +857,11 @@ a.btn {
 
 /* Button Size Variants */
 .btn--small {
-    font-size: var(--dg-text-sm);
-    height: 2.25rem; /* 36px - smaller than default 30px */
-    padding-left: 1rem;
-    padding-right: 1rem;
-    min-width: 12rem; /* Smaller minimum width */
+    font-size: var(--dg-text-xs);
+    height: 2rem; /* 32px - more compact */
+    padding-left: var(--dg-space-2);
+    padding-right: var(--dg-space-2);
+    min-width: auto; /* Allow natural width for compact buttons */
 }
 
 .btn--large {
