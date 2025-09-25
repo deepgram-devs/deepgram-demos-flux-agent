@@ -80,6 +80,25 @@ The application provides configuration options through the web interface:
 ### Audio Settings
 - **Microphone Selection**: Choose from available audio input devices
 - **Sample Rate**: Audio quality (default: 16000 Hz, recommended for Flux)
+- **Echo Cancellation**: Automatically enabled to prevent the agent from hearing itself
+- **Noise Suppression**: Built-in noise reduction for cleaner audio input
+- **Auto Gain Control**: Automatic volume level management for consistent audio
+
+
+```js
+// Get microphone stream with echo cancellation enabled
+      const constraints = {
+        audio: {
+          deviceId: this.selectedDeviceId ? { exact: this.selectedDeviceId } : undefined,
+          channelCount: 1,
+          sampleRate: this.config.sample_rate,
+          // can be set to false as needed.
+          echoCancellation: true,  // Enable echo cancellation to prevent feedback
+          noiseSuppression: true,  // Enable noise suppression for cleaner audio
+          autoGainControl: true    // Enable auto gain control for consistent levels
+        }
+      };
+```
 
 ### AI Models
 - **Language Model**: Choose from OpenAI models (gpt-4o-mini, gpt-4o, gpt-3.5-turbo)
@@ -151,6 +170,12 @@ This demo is containerized and ready for deployment to any platform that support
 - Ensure speakers/headphones are connected
 - Try a different browser if issues persist
 
+**5. Echo/Feedback Problems**
+- **Echo cancellation is enabled by default** to prevent the agent from hearing itself
+- If still experiencing feedback, try using headphones or adjusting speaker volume
+- Check that your browser supports echo cancellation (Chrome and Safari work best)
+- For advanced users: echo cancellation can be toggled in `voice-agent.js`
+
 ### Debug Information
 
 The application provides comprehensive debug logging:
@@ -164,10 +189,21 @@ The application provides comprehensive debug logging:
 
 ### Performance Tips
 
-1. **Use headphones** to prevent audio feedback
-2. **Adjust thresholds** based on your speaking style
-3. **Monitor debug logs** to optimize settings
-4. **Choose appropriate models** based on speed vs quality needs
+1. **Audio Quality Optimization**:
+   - **Echo cancellation is automatically enabled** to prevent the agent from hearing itself
+   - **Use headphones for best results**, though not strictly required due to echo cancellation
+   - **Noise suppression and auto gain control** are enabled for cleaner, more consistent audio
+   - These settings can be adjusted in the code (`voice-agent.js`) if needed for specific environments
+
+2. **Conversation Flow**:
+   - **Adjust thresholds** based on your speaking style
+   - **Monitor debug logs** to optimize settings
+   - **Choose appropriate models** based on speed vs quality needs
+
+3. **Troubleshooting Audio Issues**:
+   - If experiencing feedback, check that echo cancellation is enabled (default: true)
+   - For noisy environments, ensure noise suppression is active
+   - Audio processing settings are configured in `getUserMedia` constraints
 
 
 ## 📊 What You'll See Working

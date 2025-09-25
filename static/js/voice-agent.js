@@ -454,15 +454,16 @@ class VoiceAgent {
         sampleRate: this.config.sample_rate
       });
 
-      // Get microphone stream
+      // Get microphone stream with echo cancellation enabled
       const constraints = {
         audio: {
           deviceId: this.selectedDeviceId ? { exact: this.selectedDeviceId } : undefined,
           channelCount: 1,
           sampleRate: this.config.sample_rate,
-          echoCancellation: false,
-          noiseSuppression: false,
-          autoGainControl: false
+          // can be set to false as needed.
+          echoCancellation: true,  // Enable echo cancellation to prevent feedback
+          noiseSuppression: true,  // Enable noise suppression for cleaner audio
+          autoGainControl: true    // Enable auto gain control for consistent levels
         }
       };
 
