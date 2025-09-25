@@ -108,6 +108,73 @@
             margin-bottom: var(--dg-space-2);
             border-left: var(--dg-border-width-base) solid var(--dg-primary);
         }
+
+        /* Navigation Menu Styling */
+        .dg-sticky-nav__menu {
+            display: flex;
+            align-items: center;
+            gap: var(--dg-space-4);
+        }
+
+        /* Status Button Styling */
+        .status-btn {
+            display: inline-flex;
+            align-items: center;
+            gap: var(--dg-space-2);
+            cursor: default;
+            font-style: normal;
+            pointer-events: none; /* Disable all hover/click interactions */
+        }
+
+        /* Status Button State Colors */
+        .status-btn.status-idle {
+            background-color: rgba(148, 148, 152, 0.1);
+            color: var(--dg-text-muted);
+            border-color: var(--dg-text-muted);
+        }
+
+        .status-btn.status-listening {
+            background-color: rgba(19, 239, 147, 0.1);
+            color: var(--dg-primary);
+            border-color: var(--dg-primary);
+        }
+
+        .status-btn.status-processing {
+            background-color: rgba(254, 200, 75, 0.1);
+            color: var(--dg-warning);
+            border-color: var(--dg-warning);
+        }
+
+        .status-btn.status-speaking {
+            background-color: rgba(20, 154, 251, 0.1);
+            color: var(--dg-secondary);
+            border-color: var(--dg-secondary);
+        }
+
+        .status-btn.status-error {
+            background-color: rgba(240, 68, 56, 0.1);
+            color: var(--dg-danger);
+            border-color: var(--dg-danger);
+        }
+
+        /* Override button hover effects for status button */
+        .status-btn:hover,
+        .status-btn:focus {
+            background-color: inherit !important;
+            border-color: inherit !important;
+            box-shadow: none !important;
+        }
+
+        /* Mobile responsive adjustments */
+        @media (max-width: 768px) {
+            .dg-sticky-nav__menu {
+                gap: var(--dg-space-3);
+            }
+
+            .dg-sticky-nav__menu a.btn {
+                display: none; /* Hide docs and github buttons on very small screens */
+            }
+        }
     </style>
 </head>
 <body>
@@ -118,10 +185,16 @@
                 <span class="dg-sticky-nav__logo-text">Deepgram Flux Voice Agent</span>
             </div>
             <div class="dg-sticky-nav__menu">
-                <span class="dg-status" id="connection-status">
+                <span class="btn btn--secondary btn--small status-btn status-idle" id="connection-status">
                     <span class="status-indicator idle" id="status-indicator"></span>
                     <span id="status-text">Disconnected</span>
                 </span>
+                <a href="http://developers.deepgram.com/docs/flux/agent" class="btn btn--secondary btn--small" target="_blank" rel="noopener noreferrer">
+                    Documentation
+                </a>
+                <a href="https://github.com/deepgram-devs/deepgram-demos-flux-agent" class="btn btn--secondary btn--small" target="_blank" rel="noopener noreferrer">
+                    View on GitHub
+                </a>
             </div>
         </div>
     </nav>

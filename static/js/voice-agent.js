@@ -403,7 +403,7 @@ class VoiceAgent {
       this.audioQueue = [];
 
       // Update UI to reflect disconnected state
-      this.updateStatus('idle', 'Flux disconnected');
+      this.updateStatus('idle', 'Disconnected');
       this.updateControlButtons();
       this.elements.interimSection.style.display = 'none';
       this.updateInstructions('Connection to voice service lost. You can start a new conversation.');
@@ -736,6 +736,15 @@ class VoiceAgent {
   updateStatus(state, text) {
     this.elements.statusIndicator.className = `status-indicator ${state}`;
     this.elements.statusText.textContent = text;
+
+    // Update the status button color by changing its class
+    const statusButton = document.getElementById('connection-status');
+    if (statusButton) {
+      // Remove any existing status classes
+      statusButton.classList.remove('status-idle', 'status-listening', 'status-processing', 'status-speaking', 'status-error');
+      // Add the new status class
+      statusButton.classList.add(`status-${state}`);
+    }
   }
 
   updateInstructions(text) {
