@@ -403,7 +403,7 @@ class VoiceAgent {
       this.audioQueue = [];
 
       // Update UI to reflect disconnected state
-      this.updateStatus('idle', 'Flux disconnected');
+      this.updateStatus('idle', 'Disconnected');
       this.updateControlButtons();
       this.elements.interimSection.style.display = 'none';
       this.updateInstructions('Connection to voice service lost. You can start a new conversation.');
