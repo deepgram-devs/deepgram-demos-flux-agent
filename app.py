@@ -10,6 +10,7 @@ import os
 import struct
 import threading
 import time
+import concurrent.futures
 from datetime import datetime
 from typing import Optional, Dict, Any, List, Union
 from enum import Enum, auto
@@ -196,7 +197,7 @@ def generate_tts_audio_sync(text: str, session_id: str, config: Dict[str, Any]) 
 
                         # 🚀 STREAM CHUNK IMMEDIATELY
                         socketio.emit('agent_speaking', {
-                            'audio': list(message),  # Convert bytes to list for JSON
+                            'audio': list(message),
                             'chunk_number': audio_chunks_received,
                             'timestamp': datetime.now().isoformat()
                         }, room=session_id)
