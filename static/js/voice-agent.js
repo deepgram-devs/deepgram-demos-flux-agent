@@ -428,6 +428,18 @@ class VoiceAgent {
       this.addConversationMessage('agent', data.response, data.timestamp);
       this.addDebugMessage('AGENT', `"${data.response}"`);
     });
+
+    // 🎧 MISSING AUDIO EVENT HANDLER - This was the issue!
+    this.socket.on('agent_speaking', (data) => {
+      console.log('Agent speaking - audio received:', data.audio ? data.audio.length : 0, 'bytes');
+
+      if (data.audio && data.audio.length > 0) {
+        // Convert list back to Uint8Array for audio processing
+        const audioBytes = new Uint8Array(data.audio);
+        this.addAudioToQueue(audioBytes);
+        this.addDebugMessage('AUDIO', `Received audio chunk: ${audioBytes.length} bytes`);
+      }
+    });
   }
 
   sendConfigUpdate() {
