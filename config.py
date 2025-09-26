@@ -3,7 +3,7 @@
 import os
 
 # Flux API Configuration
-FLUX_URL = "wss://api.preview.deepgram.com/v2/listen"
+FLUX_URL = "wss://api.deepgram.com/v2/listen"
 
 # Audio Configuration
 SAMPLE_RATE = 16000          # Audio quality (16kHz recommended for Flux)
