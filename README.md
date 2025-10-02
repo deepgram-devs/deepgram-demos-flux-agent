@@ -2,8 +2,6 @@
 
 A real-time voice conversation application powered by Deepgram Flux API, OpenAI, and Deepgram TTS. Features a beautiful web interface built with Deepgram's design system.
 
-> TODO: Make sure this link works after docs deploy
-
 FLUX is Deepgram's breakthrough conversational AI model that understands **turn-taking dynamics** - not just transcribing words, but knowing when to listen, when to think, and when to speak. Perfect for building voice agents and interactive applications. Learn more about Flux by checking out our [Documentation](https://developers.deepgram.com/docs/stt/getting-started)
 
 
