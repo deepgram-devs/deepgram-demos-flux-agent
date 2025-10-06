@@ -350,14 +350,12 @@ class VoiceAgent {
     });
 
     this.socket.on('agent_speaking', (data) => {
-      console.log('Agent speaking:', data);
       this.updateStatus('speaking', 'Agent speaking...');
 
       if (data.audio && data.audio.length > 0) {
-        // Convert array to Uint8Array and create WAV format
-        const audioBytes = new Uint8Array(data.audio);
-        this.processAndPlayAudio(audioBytes);
-        this.addDebugMessage('AGENT', `Playing ${data.audio.length} bytes of audio`);
+        const audioSamples = new Int16Array(data.audio);
+        this.addAudioToQueue(audioSamples);
+        this.addDebugMessage('AGENT', `Playing audio chunk: ${data.audio.length} samples`);
       }
     });
 
@@ -428,6 +426,8 @@ class VoiceAgent {
       this.addConversationMessage('agent', data.response, data.timestamp);
       this.addDebugMessage('AGENT', `"${data.response}"`);
     });
+
+    // REMOVED: Duplicate agent_speaking handler that was causing audio conflicts
   }
 
   sendConfigUpdate() {
@@ -611,7 +611,9 @@ class VoiceAgent {
     try {
       // Ensure we have an audio context
       if (!this.audioContext || this.audioContext.state === 'closed') {
-        this.audioContext = new AudioContext();
+        this.audioContext = new AudioContext({
+          sampleRate: this.config.sample_rate
+        });
       }
 
       if (this.audioContext.state === 'suspended') {
@@ -697,14 +699,21 @@ class VoiceAgent {
     try {
       // Ensure we have an audio context for playback
       if (!this.audioContext || this.audioContext.state === 'closed') {
-        this.audioContext = new AudioContext();
+        try {
+          this.audioContext = new AudioContext({
+            sampleRate: this.config.sample_rate
+          });
+        } catch (e) {
+          console.warn('Failed to create AudioContext with configured sample rate, using default:', e);
+          this.audioContext = new AudioContext();
+        }
       }
 
       if (this.audioContext.state === 'suspended') {
         await this.audioContext.resume();
       }
 
-      // Create buffer with correct sample rate for TTS audio (use configured sample rate)
+      // Create buffer with correct sample rate for TTS audio
       const buffer = this.audioContext.createBuffer(1, audioData.length, this.config.sample_rate);
       const channelData = buffer.getChannelData(0);
 

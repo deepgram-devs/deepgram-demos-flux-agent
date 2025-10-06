@@ -10,6 +10,7 @@ import os
 import struct
 import threading
 import time
+import concurrent.futures
 from datetime import datetime
 from typing import Optional, Dict, Any, List, Union
 from enum import Enum, auto
@@ -19,10 +20,16 @@ import websockets
 from flask import Flask, render_template, request
 from flask_socketio import SocketIO, emit
 from deepgram import (
+    AsyncDeepgramClient,
     DeepgramClient,
-    SpeakWebSocketEvents,
-    SpeakWebSocketMessage,
-    SpeakWSOptions,
+)
+from deepgram.core.events import EventType
+from deepgram.extensions.types.sockets import (
+    ListenV2SocketClientResponse,
+    ListenV2MediaMessage,
+    SpeakV1SocketClientResponse,
+    SpeakV1ControlMessage,
+    SpeakV1TextMessage,
 )
 
 from config import (
@@ -47,8 +54,6 @@ logger = logging.getLogger(__name__)
 # Handle static path consistently
 app = Flask(__name__, static_url_path=f'{BASE_PATH}/static')
 app.config['SECRET_KEY'] = os.urandom(24)
-
-# No Blueprint needed - using direct route
 
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading', path=f'{BASE_PATH}/socket.io')
 
@@ -139,133 +144,105 @@ async def generate_agent_reply_normal(
         logger.error(f"Session {session_id}: Full traceback: {traceback.format_exc()}")
         return None
 
-async def generate_tts_audio(text: str, session_id: str, config: Dict[str, Any]) -> Optional[bytes]:
-    """Generate TTS audio for given text."""
+def generate_tts_audio_sync(text: str, session_id: str, config: Dict[str, Any]) -> Optional[bytes]:
+    """Generate TTS audio using proper SDK event-driven pattern with real-time streaming."""
 
-    logger.info(f"Session {session_id}: *** STARTING TTS GENERATION ***")
+    logger.info(f"Session {session_id}: *** STARTING TTS GENERATION (SDK Event-Driven) ***")
     logger.info(f"Session {session_id}: TTS Text: '{text}'")
     logger.info(f"Session {session_id}: TTS Model: {config['tts_model']}")
     logger.info(f"Session {session_id}: API Key Available: {'Yes' if DEEPGRAM_API_KEY else 'No'}")
 
     try:
-        # Set up TTS WebSocket
-        logger.info(f"Session {session_id}: Creating Deepgram TTS WebSocket client...")
-        dg_tts_ws = DeepgramClient(api_key=DEEPGRAM_API_KEY).speak.websocket.v("1")
-        logger.info(f"Session {session_id}: TTS WebSocket client created")
+        # Create synchronous Deepgram client
+        client = DeepgramClient(api_key=DEEPGRAM_API_KEY)
+        logger.info(f"Session {session_id}: Created async Deepgram client for TTS")
 
-        audio_queue: asyncio.Queue[Union[bytes, TTSEvent]] = asyncio.Queue()
+        audio_chunks = []
         audio_chunks_received = 0
+        is_flushed = False
 
-        # Get current event loop for thread-safe operations
-        loop = asyncio.get_running_loop()
-
-        # TTS event handlers
-        def on_binary_data(self, data, **kwargs):
-            nonlocal audio_chunks_received
-            audio_chunks_received += 1
-            logger.info(f"Session {session_id}: *** TTS AUDIO DATA RECEIVED *** Chunk #{audio_chunks_received}, {len(data)} bytes")
-            # Use thread-safe method to put data in async queue from sync callback
-            asyncio.run_coroutine_threadsafe(audio_queue.put(data), loop)
-
-        def on_flushed(self, **kwargs):
-            logger.info(f"Session {session_id}: *** TTS FLUSHED EVENT RECEIVED ***")
-            # Use thread-safe method to put event in async queue from sync callback
-            asyncio.run_coroutine_threadsafe(audio_queue.put(TTSEvent.FLUSHED), loop)
-
-        def on_open(self, open, **kwargs):
-            logger.info(f"Session {session_id}: *** TTS WEBSOCKET OPENED ***")
-
-        def on_error(self, error, **kwargs):
-            logger.error(f"Session {session_id}: *** TTS WEBSOCKET ERROR *** {error}")
-
-        def on_warning(self, warning, **kwargs):
-            logger.warning(f"Session {session_id}: *** TTS WEBSOCKET WARNING *** {warning}")
-
-        def on_metadata(self, metadata, **kwargs):
-            logger.info(f"Session {session_id}: *** TTS METADATA *** {metadata}")
-
-        # Register handlers
-        logger.info(f"Session {session_id}: Registering TTS event handlers...")
-        dg_tts_ws.on(SpeakWebSocketEvents.AudioData, on_binary_data)
-        dg_tts_ws.on(SpeakWebSocketEvents.Flushed, on_flushed)
-        dg_tts_ws.on(SpeakWebSocketEvents.Open, on_open)
-        dg_tts_ws.on(SpeakWebSocketEvents.Error, on_error)
-        dg_tts_ws.on(SpeakWebSocketEvents.Warning, on_warning)
-        dg_tts_ws.on(SpeakWebSocketEvents.Metadata, on_metadata)
-
-        # TTS options
-        tts_options = SpeakWSOptions(
+        # Connect using synchronous SDK context manager
+        with client.speak.v1.connect(
             model=config['tts_model'],
             encoding="linear16",
-            sample_rate=config['sample_rate']  # Use dynamic sample rate from config
-        )
-        logger.info(f"Session {session_id}: TTS Options: model={config['tts_model']}, encoding=linear16, sample_rate={config['sample_rate']}")
+            sample_rate=str(config['sample_rate'])
+        ) as connection:
+            logger.info(f"Session {session_id}: TTS sync connection established")
 
-        # Start TTS
-        logger.info(f"Session {session_id}: Starting TTS WebSocket connection...")
-        start_result = dg_tts_ws.start(tts_options)  # Remove await - this is synchronous
-        logger.info(f"Session {session_id}: TTS WebSocket start result: {start_result}")
+            # Define event handlers
+            def on_message(message: SpeakV1SocketClientResponse) -> None:
+                nonlocal audio_chunks_received
+                if isinstance(message, bytes):
+                    # Audio data received - STREAM IMMEDIATELY (SDK event-driven)
+                    audio_chunks_received += 1
+                    audio_chunks.append(message)
+                    logger.debug(f"Session {session_id}: *** TTS AUDIO CHUNK #{audio_chunks_received} *** {len(message)} bytes")
 
-        if not start_result:
-            logger.error(f"Session {session_id}: *** TTS WEBSOCKET START FAILED ***")
-            return None
+                    # Convert LINEAR16 bytes to signed 16-bit integers for proper audio playback
+                    int16_samples = struct.unpack(f'<{len(message)//2}h', message)
 
-        logger.info(f"Session {session_id}: *** TTS WEBSOCKET STARTED SUCCESSFULLY ***")
-
-        # Send text and flush
-        logger.info(f"Session {session_id}: Sending text to TTS: '{text}'")
-        dg_tts_ws.send_text(text)  # Remove await - this is synchronous
-        logger.info(f"Session {session_id}: Text sent, now flushing...")
-        dg_tts_ws.flush()  # Remove await - this is synchronous
-        logger.info(f"Session {session_id}: TTS flush complete, waiting for audio...")
-
-        # Collect audio
-        audio_chunks = []
-        chunk_count = 0
-        total_timeout = 10.0  # Increased timeout
-
-        logger.info(f"Session {session_id}: Starting audio collection loop...")
-        while True:
-            try:
-                logger.debug(f"Session {session_id}: Waiting for audio chunk... (timeout: {total_timeout}s)")
-                chunk = await asyncio.wait_for(audio_queue.get(), timeout=total_timeout)
-
-                if chunk == TTSEvent.FLUSHED:
-                    logger.info(f"Session {session_id}: *** RECEIVED FLUSH EVENT - AUDIO COLLECTION COMPLETE ***")
-                    break
-                elif isinstance(chunk, bytes):
-                    chunk_count += 1
-                    audio_chunks.append(chunk)
-                    logger.info(f"Session {session_id}: Collected audio chunk #{chunk_count}, {len(chunk)} bytes, total chunks: {len(audio_chunks)}")
+                    socketio.emit('agent_speaking', {
+                        'audio': list(int16_samples),
+                        'chunk_number': audio_chunks_received,
+                        'timestamp': datetime.now().isoformat()
+                    }, room=session_id)
                 else:
-                    logger.warning(f"Session {session_id}: Unexpected chunk type: {type(chunk)}")
+                    # Handle non-audio messages
+                    msg_type = getattr(message, 'type', 'Unknown')
+                    logger.info(f"Session {session_id}: TTS event: {msg_type}")
 
-            except asyncio.TimeoutError:
-                logger.warning(f"Session {session_id}: *** TTS TIMEOUT after {total_timeout}s *** Chunks received: {len(audio_chunks)}")
-                break
+            # Set up event handlers (SDK event-driven pattern)
+            connection.on(EventType.OPEN, lambda _: logger.info(f"Session {session_id}: TTS connection opened"))
+            connection.on(EventType.MESSAGE, on_message)
+            connection.on(EventType.CLOSE, lambda _: logger.info(f"Session {session_id}: TTS connection closed"))
+            connection.on(EventType.ERROR, lambda error: logger.error(f"Session {session_id}: TTS error: {error}"))
 
-        # Finalize
-        logger.info(f"Session {session_id}: Finishing TTS WebSocket...")
-        try:
-            dg_tts_ws.finish()  # Remove await - this is synchronous
-            logger.info(f"Session {session_id}: TTS WebSocket finished successfully")
-        except Exception as finish_error:
-            logger.warning(f"Session {session_id}: TTS finish error (non-critical): {finish_error}")
+            # Start listening in background thread (SDK pattern)
+            import threading
+            listen_thread = threading.Thread(target=connection.start_listening, daemon=True)
+            listen_thread.start()
+
+            # Send text message (SDK pattern)
+            text_message = SpeakV1TextMessage(type="Speak", text=text)
+            connection.send_text(text_message)
+            logger.info(f"Session {session_id}: Text sent to TTS")
+
+            # Send control messages (SDK pattern)
+            connection.send_control(SpeakV1ControlMessage(type="Flush"))
+            connection.send_control(SpeakV1ControlMessage(type="Close"))
+            logger.info(f"Session {session_id}: Control messages sent")
+
+            # Wait for completion
+            listen_thread.join(timeout=10.0)
+            logger.info(f"Session {session_id}: TTS SDK event-driven complete")
 
         # Return results
         if audio_chunks:
             combined_audio = b''.join(audio_chunks)
-            logger.info(f"Session {session_id}: *** TTS SUCCESS *** Total chunks: {len(audio_chunks)}, Total bytes: {len(combined_audio)}")
+            logger.info(f"Session {session_id}: *** TTS SYNC SUCCESS *** Total chunks: {len(audio_chunks)}, Total bytes: {len(combined_audio)}")
             return combined_audio
         else:
-            logger.error(f"Session {session_id}: *** TTS FAILED - NO AUDIO CHUNKS RECEIVED ***")
+            logger.error(f"Session {session_id}: *** TTS SYNC FAILED - NO AUDIO CHUNKS RECEIVED ***")
             return None
 
     except Exception as e:
-        logger.error(f"Session {session_id}: *** TTS EXCEPTION *** {e}")
+        logger.error(f"Session {session_id}: *** TTS SYNC EXCEPTION *** {e}")
         import traceback
-        logger.error(f"Session {session_id}: TTS Full traceback: {traceback.format_exc()}")
+        logger.error(f"Session {session_id}: TTS sync traceback: {traceback.format_exc()}")
         return None
+
+
+# Async wrapper to call sync TTS from async context
+async def generate_tts_audio(text: str, session_id: str, config: Dict[str, Any]) -> Optional[bytes]:
+    """Async wrapper for sync TTS function - maintains compatibility."""
+    import asyncio
+    import concurrent.futures
+
+    # Run sync TTS function in thread pool to avoid blocking
+    loop = asyncio.get_event_loop()
+    with concurrent.futures.ThreadPoolExecutor() as pool:
+        result = await loop.run_in_executor(pool, generate_tts_audio_sync, text, session_id, config)
+        return result
 
 # Flask routes
 @app.route('/flux-agent/')
@@ -294,7 +271,7 @@ def handle_connect():
             'eot_threshold': EOT_THRESHOLD,
             'eot_timeout_ms': EOT_TIMEOUT_MS,
         },
-        'flux_ws': None,
+        'flux_connection': None,
         'conversation_active': False,
     }
 
@@ -308,10 +285,10 @@ def handle_disconnect():
 
     # Clean up session
     if session_id in active_sessions:
-        # Close any active WebSocket connections
+        # Close any active SDK connections
         session = active_sessions[session_id]
-        if session.get('flux_ws'):
-            # Close Flux WebSocket if active
+        if session.get('flux_connection'):
+            # Close Flux SDK connection if active
             pass
 
         del active_sessions[session_id]
@@ -371,11 +348,11 @@ def handle_stop_conversation():
         session['state'] = ConversationState.IDLE
         session['conversation_active'] = False
 
-        # Close Flux WebSocket if active
-        if session.get('flux_ws'):
-            # Signal to close the WebSocket immediately
+        # Close SDK connection if active
+        if session.get('flux_connection'):
+            # Signal to close the SDK connection immediately
             session['should_close'] = True
-            logger.info(f"Session {session_id}: Signaled WebSocket to close gracefully")
+            logger.info(f"Session {session_id}: Signaled SDK connection to close gracefully")
 
         # Clear audio buffer
         if 'audio_buffer' in session:
@@ -417,9 +394,9 @@ def handle_audio_data(data):
 
 
 async def connect_to_flux(session_id: str):
-    """Connect to Deepgram Flux WebSocket and handle the conversation."""
+    """Connect to Deepgram SDK using SDK Listen v2 and handle the conversation."""
 
-    logger.info(f"Session {session_id}: Connecting to Flux WebSocket")
+    logger.info(f"Session {session_id}: Connecting using SDK")
 
     if session_id not in active_sessions:
         logger.error(f"Session {session_id}: Session not found")
@@ -428,65 +405,92 @@ async def connect_to_flux(session_id: str):
     session = active_sessions[session_id]
     config = session['config']
 
-    # Build Flux WebSocket URL with parameters (matching reference code)
-    flux_url = f"{FLUX_URL}?model=flux-general-en&sample_rate={config['sample_rate']}&encoding={FLUX_ENCODING}"
-
-    headers = {
-        'Authorization': f'Token {DEEPGRAM_API_KEY}',
-        'User-Agent': 'DeepgramFluxVoiceAgent/1.0'
-    }
+    # Create async Deepgram client
+    client = AsyncDeepgramClient(api_key=DEEPGRAM_API_KEY)
 
     try:
-        async with websockets.connect(flux_url, additional_headers=headers) as websocket:
-            session['flux_ws'] = websocket
-            logger.info(f"Session {session_id}: Connected to Flux WebSocket")
+        # Connect using SDK Listen v2
+        async with client.listen.v2.connect(
+            model="flux-general-en",
+            encoding=FLUX_ENCODING,
+            sample_rate=str(config['sample_rate'])
+        ) as connection:
+            session['flux_connection'] = connection
+            logger.info(f"Session {session_id}: Connected to SDK")
 
-            # Send audio and handle responses concurrently
-            audio_task = asyncio.create_task(send_audio_to_flux(session_id, websocket))
-            response_task = asyncio.create_task(handle_flux_responses(session_id, websocket))
+            # Set up event handlers
+            def on_open(open_event):
+                logger.info(f"Session {session_id}: SDK connection opened - ready to stream audio")
+                # Send connected event to match original behavior
+                socketio.emit('flux_event', {
+                    'event_type': 'receiveConnected',
+                    'data': {'type': 'receiveConnected'},
+                    'timestamp': datetime.now().isoformat()
+                }, room=session_id)
 
-            # Wait for either task to complete (or for shutdown signal)
-            try:
-                await asyncio.gather(audio_task, response_task)
-            except Exception as e:
-                logger.error(f"Session {session_id}: Flux connection error: {e}")
-            finally:
-                # Cancel tasks immediately to stop processing
-                if not audio_task.done():
-                    logger.info(f"Session {session_id}: Cancelling audio task")
-                    audio_task.cancel()
-                if not response_task.done():
-                    logger.info(f"Session {session_id}: Cancelling response task")
-                    response_task.cancel()
+            def on_message(message: ListenV2SocketClientResponse):
+                logger.debug(f"Session {session_id}: SDK message received: {message}")
+                handle_flux_sdk_message(session_id, message)
 
-                # Wait for tasks to finish cancellation gracefully
-                try:
-                    await asyncio.gather(audio_task, response_task, return_exceptions=True)
-                    logger.info(f"Session {session_id}: Both tasks completed/cancelled")
-                except Exception as cleanup_error:
-                    logger.warning(f"Session {session_id}: Task cleanup error: {cleanup_error}")
-
-                # Clean up session state
-                session['flux_ws'] = None
-                session['should_close'] = False  # Reset the flag
-
-                logger.info(f"Session {session_id}: Flux WebSocket connection fully closed and cleaned up")
-
-                # Notify client of disconnection
+            def on_close(close_event):
+                logger.info(f"Session {session_id}: SDK connection closed")
                 socketio.emit('flux_disconnected',
                             {'timestamp': datetime.now().isoformat()},
                             room=session_id)
 
+            def on_error(error):
+                logger.error(f"Session {session_id}: SDK connection error: {error}")
+                socketio.emit('conversation_error',
+                            {'error': f'SDK error: {str(error)}'},
+                            room=session_id)
+
+            # Register event handlers
+            connection.on(EventType.OPEN, on_open)
+            connection.on(EventType.MESSAGE, on_message)
+            connection.on(EventType.CLOSE, on_close)
+            connection.on(EventType.ERROR, on_error)
+
+            # Start listening and audio sending concurrently
+            listen_task = asyncio.create_task(connection.start_listening())
+            audio_task = asyncio.create_task(send_audio_to_flux_sdk(session_id, connection))
+
+            # Wait for either task to complete (or for shutdown signal)
+            try:
+                await asyncio.gather(listen_task, audio_task)
+            except Exception as e:
+                logger.error(f"Session {session_id}: SDK connection error: {e}")
+            finally:
+                # Cancel tasks
+                if not listen_task.done():
+                    logger.info(f"Session {session_id}: Cancelling listen task")
+                    listen_task.cancel()
+                if not audio_task.done():
+                    logger.info(f"Session {session_id}: Cancelling audio task")
+                    audio_task.cancel()
+
+                # Wait for tasks to finish cancellation
+                try:
+                    await asyncio.gather(listen_task, audio_task, return_exceptions=True)
+                    logger.info(f"Session {session_id}: Both SDK tasks completed/cancelled")
+                except Exception as cleanup_error:
+                    logger.warning(f"Session {session_id}: SDK task cleanup error: {cleanup_error}")
+
+                # Clean up session state
+                session['flux_connection'] = None
+                session['should_close'] = False
+
+                logger.info(f"Session {session_id}: SDK connection fully closed and cleaned up")
+
     except Exception as e:
-        logger.error(f"Session {session_id}: Failed to connect to Flux: {e}")
+        logger.error(f"Session {session_id}: Failed to connect to SDK: {e}")
         socketio.emit('conversation_error',
-                     {'error': f'Failed to connect to Flux: {str(e)}'},
+                     {'error': f'Failed to connect to SDK: {str(e)}'},
                      room=session_id)
 
-async def send_audio_to_flux(session_id: str, websocket):
-    """Send audio data from client to Flux WebSocket."""
+async def send_audio_to_flux_sdk(session_id: str, connection):
+    """Send audio data from client to Flux API using SDK connection."""
 
-    logger.info(f"Session {session_id}: Starting audio transmission to Flux")
+    logger.info(f"Session {session_id}: Starting audio transmission to SDK")
 
     session = active_sessions[session_id]
 
@@ -496,8 +500,9 @@ async def send_audio_to_flux(session_id: str, websocket):
             if 'audio_buffer' in session and session['audio_buffer']:
                 audio_bytes = session['audio_buffer'].pop(0)
 
-                await websocket.send(audio_bytes)
-                logger.debug(f"Session {session_id}: Sent {len(audio_bytes)} bytes to Flux")
+                # Send audio using SDK connection
+                await connection.send_media(audio_bytes)
+                logger.debug(f"Session {session_id}: Sent {len(audio_bytes)} bytes sent to SDK")
 
             await asyncio.sleep(0.01)  # Small delay to prevent busy loop
 
@@ -506,105 +511,109 @@ async def send_audio_to_flux(session_id: str, websocket):
             logger.info(f"Session {session_id}: Audio transmission stopping due to close signal")
 
     except Exception as e:
-        logger.error(f"Session {session_id}: Error sending audio to Flux: {e}")
+        logger.error(f"Session {session_id}: Error sending audio to SDK: {e}")
     finally:
-        logger.info(f"Session {session_id}: Audio transmission to Flux ended")
+        logger.info(f"Session {session_id}: Audio transmission to SDK ended")
 
-async def handle_flux_responses(session_id: str, websocket):
-    """Handle responses from Flux WebSocket."""
+def handle_flux_sdk_message(session_id: str, message: ListenV2SocketClientResponse):
+    """Handle messages from SDK connection."""
 
-    logger.info(f"Session {session_id}: Starting Flux response handler")
+    if session_id not in active_sessions:
+        return
 
     session = active_sessions[session_id]
     config = session['config']
 
+    # Check if we should close the connection
+    if session.get('should_close', False) or not session.get('conversation_active', False):
+        return
+
     try:
-        async for message in websocket:
-            # Check if we should close the connection
-            if session.get('should_close', False):
-                logger.info(f"Session {session_id}: Response handler stopping due to close signal")
-                break
+        # Convert SDK message to dict for processing
+        if hasattr(message, 'model_dump'):
+            data = message.model_dump()
+        elif hasattr(message, 'dict'):
+            data = message.dict()
+        else:
+            # Fallback: try to access attributes directly
+            data = {
+                'type': getattr(message, 'type', None),
+                'event': getattr(message, 'event', None),
+                'transcript': getattr(message, 'transcript', None),
+                'error': getattr(message, 'error', None),
+            }
 
-            # Also check if conversation is no longer active
-            if not session.get('conversation_active', False):
-                logger.info(f"Session {session_id}: Response handler stopping - conversation inactive")
-                break
+        logger.debug(f"Session {session_id}: SDK message: {data}")
 
-            try:
-                data = json.loads(message)
-                logger.debug(f"Session {session_id}: Flux response: {data}")
+        # Handle different Flux event types
+        message_type = data.get('type')
 
-                # Handle different Flux event types
-                if data.get('type') == 'receiveConnected':
-                    logger.info(f"Session {session_id}: Connected to Flux - ready to stream audio")
+        if message_type == 'receiveConnected':
+            logger.info(f"Session {session_id}: Connected to SDK - ready to stream audio")
 
-                elif data.get('type') == 'receiveFatalError':
-                    logger.error(f"Session {session_id}: Fatal error: {data.get('error', 'Unknown error')}")
-                    socketio.emit('conversation_error', {
-                        'error': f"Flux fatal error: {data.get('error', 'Unknown error')}",
-                        'timestamp': datetime.now().isoformat()
-                    }, room=session_id)
+        elif message_type == 'receiveFatalError':
+            error_msg = data.get('error', 'Unknown error')
+            logger.error(f"Session {session_id}: Fatal error: {error_msg}")
+            socketio.emit('conversation_error', {
+                'error': f"SDK fatal error: {error_msg}",
+                'timestamp': datetime.now().isoformat()
+            }, room=session_id)
 
-                elif data.get('type') == 'TurnInfo':
-                    event = data.get('event')
-                    logger.debug(f"Session {session_id}: TurnInfo event: {event}")
+        elif message_type == 'TurnInfo':
+            event = data.get('event')
+            logger.debug(f"Session {session_id}: TurnInfo event: {event}")
 
-                    if event == 'StartOfTurn':
-                        logger.info(f"Session {session_id}: {event} - User started speaking")
-                        session['state'] = ConversationState.LISTENING
-                        socketio.emit('speech_started', {
-                            'timestamp': datetime.now().isoformat()
-                        }, room=session_id)
-
-                    elif event == 'EndOfTurn':
-                        # User finished speaking
-                        transcript = data.get('transcript', '')
-                        logger.info(f"Session {session_id}: EndOfTurn event - transcript: '{transcript}'")
-
-                        if transcript.strip():
-                            logger.info(f"Session {session_id}: User said: '{transcript}' - PROCESSING USER SPEECH")
-
-                            # Add to conversation history
-                            session['messages'].append({"role": "user", "content": transcript})
-
-                            # Notify client
-                            socketio.emit('user_speech', {
-                                'transcript': transcript,
-                                'timestamp': datetime.now().isoformat()
-                            }, room=session_id)
-
-                            # Generate and send agent response
-                            logger.info(f"Session {session_id}: Starting LLM generation task")
-                            asyncio.create_task(generate_and_send_response(session_id, transcript, config))
-                        else:
-                            logger.warning(f"Session {session_id}: EndOfTurn event but transcript is empty!")
-
-                    elif event == 'Update':
-                        # Interim transcript updates
-                        transcript = data.get('transcript', '')
-                        if transcript.strip():
-                            socketio.emit('interim_transcript', {
-                                'transcript': transcript,
-                                'is_final': False,
-                                'timestamp': datetime.now().isoformat()
-                            }, room=session_id)
-
-                # Forward raw Flux events to client for debugging
-                socketio.emit('flux_event', {
-                    'event_type': data.get('type'),
-                    'data': data,
+            if event == 'StartOfTurn':
+                logger.info(f"Session {session_id}: {event} - User started speaking")
+                session['state'] = ConversationState.LISTENING
+                socketio.emit('speech_started', {
                     'timestamp': datetime.now().isoformat()
                 }, room=session_id)
 
-            except json.JSONDecodeError as e:
-                logger.error(f"Session {session_id}: Invalid JSON from Flux: {e}")
-            except Exception as e:
-                logger.error(f"Session {session_id}: Error processing Flux message: {e}")
+            elif event == 'EndOfTurn':
+                # User finished speaking
+                transcript = data.get('transcript', '')
+                logger.info(f"Session {session_id}: EndOfTurn event - transcript: '{transcript}'")
+
+                if transcript.strip():
+                    logger.info(f"Session {session_id}: User said: '{transcript}' - PROCESSING USER SPEECH")
+
+                    # Add to conversation history
+                    session['messages'].append({"role": "user", "content": transcript})
+
+                    # Notify client
+                    socketio.emit('user_speech', {
+                        'transcript': transcript,
+                        'timestamp': datetime.now().isoformat()
+                    }, room=session_id)
+
+                    # Generate and send agent response
+                    logger.info(f"Session {session_id}: Starting LLM generation task")
+                    asyncio.create_task(generate_and_send_response(session_id, transcript, config))
+                else:
+                    logger.warning(f"Session {session_id}: EndOfTurn event but transcript is empty!")
+
+            elif event == 'Update':
+                # Interim transcript updates
+                transcript = data.get('transcript', '')
+                if transcript.strip():
+                    socketio.emit('interim_transcript', {
+                        'transcript': transcript,
+                        'is_final': False,
+                        'timestamp': datetime.now().isoformat()
+                    }, room=session_id)
+
+        # Forward raw Flux events to client for debugging
+        socketio.emit('flux_event', {
+            'event_type': message_type,
+            'data': data,
+            'timestamp': datetime.now().isoformat()
+        }, room=session_id)
 
     except Exception as e:
-        logger.error(f"Session {session_id}: Error in Flux response handler: {e}")
-    finally:
-        logger.info(f"Session {session_id}: Flux response handler ended")
+        logger.error(f"Session {session_id}: Error processing SDK message: {e}")
+        import traceback
+        logger.error(f"Session {session_id}: Full traceback: {traceback.format_exc()}")
 
 async def generate_and_send_response(session_id: str, user_speech: str, config: Dict[str, Any]):
     """Generate and send agent response."""
@@ -637,13 +646,9 @@ async def generate_and_send_response(session_id: str, user_speech: str, config: 
 
             session['state'] = ConversationState.SPEAKING
 
-            # Send audio to client
-            socketio.emit('agent_speaking', {
-                'audio': list(audio_data),  # Convert bytes to list for JSON serialization
-                'timestamp': datetime.now().isoformat()
-            }, room=session_id)
-
-            logger.info(f"Session {session_id}: Sent {len(audio_data)} bytes of agent audio")
+            # Audio was already streamed in real-time during TTS generation!
+            # Just log completion (no duplicate audio sending)
+            logger.info(f"Session {session_id}: Audio streaming completed - {len(audio_data)} bytes streamed in real-time via {len(audio_data)//1280 if audio_data else 0} chunks")
 
         session['state'] = ConversationState.LISTENING
 
