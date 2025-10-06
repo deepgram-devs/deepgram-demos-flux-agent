@@ -147,9 +147,9 @@ async def generate_agent_reply_normal(
         return None
 
 def generate_tts_audio_sync(text: str, session_id: str, config: Dict[str, Any]) -> Optional[bytes]:
-    """Generate TTS audio for given text using the Deepgram SDK."""
+    """Generate TTS audio using proper SDK event-driven pattern with real-time streaming."""
 
-    logger.info(f"Session {session_id}: *** STARTING TTS GENERATION ***")
+    logger.info(f"Session {session_id}: *** STARTING TTS GENERATION (SDK Event-Driven) ***")
     logger.info(f"Session {session_id}: TTS Text: '{text}'")
     logger.info(f"Session {session_id}: TTS Model: {config['tts_model']}")
     logger.info(f"Session {session_id}: API Key Available: {'Yes' if DEEPGRAM_API_KEY else 'No'}")
@@ -171,51 +171,54 @@ def generate_tts_audio_sync(text: str, session_id: str, config: Dict[str, Any]) 
         ) as connection:
             logger.info(f"Session {session_id}: TTS sync connection established")
 
-            # Send text message using synchronous SDK (like original)
+            # Define event handlers (proper SDK pattern)
+            def on_message(message: SpeakV1SocketClientResponse) -> None:
+                nonlocal audio_chunks_received
+                if isinstance(message, bytes):
+                    # Audio data received - STREAM IMMEDIATELY (SDK event-driven)
+                    audio_chunks_received += 1
+                    audio_chunks.append(message)
+                    logger.debug(f"Session {session_id}: *** TTS AUDIO CHUNK #{audio_chunks_received} *** {len(message)} bytes")
+
+                    # 🚀 STREAM CHUNK IMMEDIATELY (Convert LINEAR16 bytes to signed 16-bit integers)
+                    # SDK provides LINEAR16: convert bytes to proper signed 16-bit samples
+                    int16_samples = struct.unpack(f'<{len(message)//2}h', message)  # Little-endian signed 16-bit
+                    logger.info(f"Session {session_id}: 🎵 TTS Audio Fixed - Chunk #{audio_chunks_received}: {len(message)} bytes -> {len(int16_samples)} Int16 samples, range: {min(int16_samples)} to {max(int16_samples)}, first 10: {int16_samples[:10]}")
+
+                    socketio.emit('agent_speaking', {
+                        'audio': list(int16_samples),  # Send as proper signed 16-bit integers
+                        'chunk_number': audio_chunks_received,
+                        'timestamp': datetime.now().isoformat()
+                    }, room=session_id)
+                else:
+                    # Handle non-audio messages
+                    msg_type = getattr(message, 'type', 'Unknown')
+                    logger.info(f"Session {session_id}: TTS event: {msg_type}")
+
+            # Set up event handlers (SDK event-driven pattern)
+            connection.on(EventType.OPEN, lambda _: logger.info(f"Session {session_id}: TTS connection opened"))
+            connection.on(EventType.MESSAGE, on_message)
+            connection.on(EventType.CLOSE, lambda _: logger.info(f"Session {session_id}: TTS connection closed"))
+            connection.on(EventType.ERROR, lambda error: logger.error(f"Session {session_id}: TTS error: {error}"))
+
+            # Start listening in background thread (SDK pattern)
+            import threading
+            listen_thread = threading.Thread(target=connection.start_listening, daemon=True)
+            listen_thread.start()
+
+            # Send text message (SDK pattern)
             text_message = SpeakV1TextMessage(type="Speak", text=text)
             connection.send_text(text_message)
             logger.info(f"Session {session_id}: Text sent to TTS")
 
-            # Send flush command using synchronous SDK
+            # Send control messages (SDK pattern)
             connection.send_control(SpeakV1ControlMessage(type="Flush"))
-            logger.info(f"Session {session_id}: Flush command sent")
+            connection.send_control(SpeakV1ControlMessage(type="Close"))
+            logger.info(f"Session {session_id}: Control messages sent")
 
-            # Receive messages synchronously (similar to original pattern)
-            total_timeout = 10.0
-            start_time = time.time()
-
-            while (time.time() - start_time) < total_timeout:
-                try:
-                    # Receive message synchronously
-                    message = connection.recv()
-
-                    if isinstance(message, bytes):
-                        # Audio data received - STREAM IMMEDIATELY
-                        audio_chunks_received += 1
-                        audio_chunks.append(message)
-                        logger.debug(f"Session {session_id}: *** TTS AUDIO CHUNK #{audio_chunks_received} *** {len(message)} bytes")
-
-                        # 🚀 STREAM CHUNK IMMEDIATELY
-                        socketio.emit('agent_speaking', {
-                            'audio': list(message),
-                            'chunk_number': audio_chunks_received,
-                            'timestamp': datetime.now().isoformat()
-                        }, room=session_id)
-
-                    else:
-                        # Handle non-audio messages
-                        msg_type = getattr(message, 'type', 'Unknown')
-                        logger.info(f"Session {session_id}: TTS message: {msg_type}")
-
-                        if msg_type == 'Flushed':
-                            logger.info(f"Session {session_id}: *** TTS FLUSHED - COMPLETE ***")
-                            break  # Exit the loop when flushed
-
-                except Exception as recv_error:
-                    logger.debug(f"Session {session_id}: TTS recv error (may be normal): {recv_error}")
-                    break  # Exit on any receive error
-
-            logger.info(f"Session {session_id}: TTS sync collection complete")
+            # Wait for completion
+            listen_thread.join(timeout=10.0)
+            logger.info(f"Session {session_id}: TTS SDK event-driven complete")
 
         # Return results
         if audio_chunks:

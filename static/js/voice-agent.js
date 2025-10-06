@@ -350,14 +350,24 @@ class VoiceAgent {
     });
 
     this.socket.on('agent_speaking', (data) => {
-      console.log('Agent speaking:', data);
+      console.log('🔊 Agent speaking event received:', {
+        audioLength: data.audio ? data.audio.length : 0,
+        chunkNumber: data.chunk_number,
+        sampleValues: data.audio ? data.audio.slice(0, 10) : []  // First 10 values for debugging
+      });
       this.updateStatus('speaking', 'Agent speaking...');
 
       if (data.audio && data.audio.length > 0) {
-        // Convert array to Uint8Array and create WAV format
-        const audioBytes = new Uint8Array(data.audio);
-        this.processAndPlayAudio(audioBytes);
-        this.addDebugMessage('AGENT', `Playing ${data.audio.length} bytes of audio`);
+        // Server now sends proper signed 16-bit integers - use directly with Int16Array
+        const audioSamples = new Int16Array(data.audio);
+        console.log('🎵 Processing audio chunk (FIXED):', {
+          originalDataType: typeof data.audio[0],
+          originalRange: `${Math.min(...data.audio)} to ${Math.max(...data.audio)}`,
+          int16ArrayLength: audioSamples.length,
+          int16Range: `${Math.min(...audioSamples)} to ${Math.max(...audioSamples)}`
+        });
+        this.addAudioToQueue(audioSamples);  // Use the proper queue method for Int16 data
+        this.addDebugMessage('AGENT', `Playing ${data.audio.length} Int16 samples`);
       }
     });
 
@@ -429,16 +439,7 @@ class VoiceAgent {
       this.addDebugMessage('AGENT', `"${data.response}"`);
     });
 
-    // 🎧 MISSING AUDIO EVENT HANDLER - This was the issue!
-    this.socket.on('agent_speaking', (data) => {
-      console.log('Agent speaking - audio received:', data.audio ? data.audio.length : 0, 'bytes');
-
-      if (data.audio && data.audio.length > 0) {
-        const audioBytes = new Uint8Array(data.audio);
-        this.addAudioToQueue(audioBytes);
-        this.addDebugMessage('AUDIO', `Received audio chunk: ${audioBytes.length} bytes`);
-      }
-    });
+    // REMOVED: Duplicate agent_speaking handler that was causing audio conflicts
   }
 
   sendConfigUpdate() {
@@ -609,6 +610,13 @@ class VoiceAgent {
   }
 
   addAudioToQueue(audioData) {
+    console.log('✅ CORRECT PATH: addAudioToQueue called with:', {
+      audioDataLength: audioData.length,
+      audioDataType: audioData.constructor.name,
+      sampleRange: `${Math.min(...audioData)} to ${Math.max(...audioData)}`,
+      currentQueueLength: this.audioQueue.length,
+      isPlayingAudio: this.isPlayingAudio
+    });
     this.audioQueue.push(audioData);
     if (!this.isPlayingAudio) {
       this.playNextInQueue();
@@ -620,9 +628,16 @@ class VoiceAgent {
    */
   async processAndPlayAudio(audioBytes) {
     try {
-      // Ensure we have an audio context
+      // Ensure we have an audio context (use configured sample rate)
       if (!this.audioContext || this.audioContext.state === 'closed') {
-        this.audioContext = new AudioContext();
+        this.audioContext = new AudioContext({
+          sampleRate: this.config.sample_rate  // Match TTS sample rate (16000 Hz)
+        });
+        console.log('🎧 Created AudioContext:', {
+          configuredSampleRate: this.config.sample_rate,
+          actualSampleRate: this.audioContext.sampleRate,
+          match: this.config.sample_rate === this.audioContext.sampleRate
+        });
       }
 
       if (this.audioContext.state === 'suspended') {
@@ -631,9 +646,20 @@ class VoiceAgent {
 
       // Create WAV header for the raw linear16 data
       const wavBuffer = this.createWAVBuffer(audioBytes, this.config.sample_rate);
+      console.log('📄 WAV buffer created:', {
+        inputBytesLength: audioBytes.length,
+        wavBufferSize: wavBuffer.byteLength,
+        expectedSampleRate: this.config.sample_rate
+      });
 
       // Use the Web Audio API to decode the WAV data
       const audioBuffer = await this.audioContext.decodeAudioData(wavBuffer);
+      console.log('🎶 Audio decoded:', {
+        duration: audioBuffer.duration,
+        sampleRate: audioBuffer.sampleRate,
+        length: audioBuffer.length,
+        numberOfChannels: audioBuffer.numberOfChannels
+      });
 
       // Play the decoded audio
       this.playDecodedAudio(audioBuffer);
@@ -706,18 +732,53 @@ class VoiceAgent {
     const audioData = this.audioQueue.shift();
 
     try {
-      // Ensure we have an audio context for playback
+      console.log('🎯 playNextInQueue called with:', {
+        audioDataLength: audioData.length,
+        audioDataType: audioData.constructor.name,
+        sampleRange: `${Math.min(...audioData)} to ${Math.max(...audioData)}`,
+        first10Samples: Array.from(audioData.slice(0, 10))
+      });
+
+      // Ensure we have an audio context for playback (use configured sample rate)
       if (!this.audioContext || this.audioContext.state === 'closed') {
-        this.audioContext = new AudioContext();
+        try {
+          this.audioContext = new AudioContext({
+            sampleRate: this.config.sample_rate  // Request 16000 Hz to match TTS
+          });
+        } catch (e) {
+          console.warn('🚨 Failed to create AudioContext with 16kHz, using default:', e);
+          this.audioContext = new AudioContext();  // Use browser default
+        }
+
+        console.log('🎧 AudioContext Analysis:', {
+          requestedSampleRate: this.config.sample_rate,
+          actualSampleRate: this.audioContext.sampleRate,
+          sampleRateSupported: this.config.sample_rate === this.audioContext.sampleRate,
+          fallbackRatio: this.audioContext.sampleRate / this.config.sample_rate,
+          speedEffect: this.config.sample_rate !== this.audioContext.sampleRate ?
+            (this.audioContext.sampleRate > this.config.sample_rate ? 'will play faster' : 'will play slower') :
+            'correct speed'
+        });
       }
 
       if (this.audioContext.state === 'suspended') {
         await this.audioContext.resume();
       }
 
-      // Create buffer with correct sample rate for TTS audio (use configured sample rate)
-      const buffer = this.audioContext.createBuffer(1, audioData.length, this.config.sample_rate);
+      // Create buffer with data's actual sample rate (16kHz from TTS)
+      // AudioContext will handle resampling to its native rate
+      const dataSampleRate = this.config.sample_rate;  // 16000 Hz from TTS
+      const buffer = this.audioContext.createBuffer(1, audioData.length, dataSampleRate);
       const channelData = buffer.getChannelData(0);
+      console.log('📊 Audio buffer created (PROPER DATA RATE):', {
+        configuredSampleRate: this.config.sample_rate,
+        actualContextSampleRate: this.audioContext.sampleRate,
+        bufferDataSampleRate: dataSampleRate,
+        bufferLength: buffer.length,
+        bufferDuration: buffer.duration,
+        contextVsDataRate: `${this.audioContext.sampleRate}Hz context vs ${dataSampleRate}Hz data`,
+        willResample: this.audioContext.sampleRate !== dataSampleRate
+      });
 
       // Convert Int16 to Float32 with proper normalization
       for (let i = 0; i < audioData.length; i++) {

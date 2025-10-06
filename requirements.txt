@@ -10,7 +10,7 @@ python-socketio>=5.13.0
 websockets>=15.0.0
 
 # API SDKs
-deepgram-sdk>=5.0.0
+deepgram-sdk>=5.0.0 # use new SDK version by tag.
 openai>=1.92.0
 
 # Async Support
