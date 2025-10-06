@@ -9,6 +9,14 @@ FLUX is Deepgram's breakthrough conversational AI model that understands **turn-
 
 This demo will run in Chrome and Safari browsers only. No Firefox support.
 
+## Using the Deepgram Python SDK
+
+This demo's main branch doesn't use the Deepgram Python SDK. If you want to see an example of this demo using the SDK, check out the [feat/sdk-integration](https://github.com/deepgram-devs/deepgram-demos-flux-agent/tree/feat/sdk-integration) branch.
+
+```bash
+git checkout feat/sdk-integration
+```
+
 ## Features
 
 - **Real-time voice conversations** with AI assistant

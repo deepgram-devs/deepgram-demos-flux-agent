@@ -55,8 +55,6 @@ logger = logging.getLogger(__name__)
 app = Flask(__name__, static_url_path=f'{BASE_PATH}/static')
 app.config['SECRET_KEY'] = os.urandom(24)
 
-# No Blueprint needed - using direct route
-
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading', path=f'{BASE_PATH}/socket.io')
 
 # Global state management
@@ -155,7 +153,7 @@ def generate_tts_audio_sync(text: str, session_id: str, config: Dict[str, Any]) 
     logger.info(f"Session {session_id}: API Key Available: {'Yes' if DEEPGRAM_API_KEY else 'No'}")
 
     try:
-        # Create synchronous Deepgram client (like original)
+        # Create synchronous Deepgram client
         client = DeepgramClient(api_key=DEEPGRAM_API_KEY)
         logger.info(f"Session {session_id}: Created async Deepgram client for TTS")
 
@@ -163,7 +161,7 @@ def generate_tts_audio_sync(text: str, session_id: str, config: Dict[str, Any]) 
         audio_chunks_received = 0
         is_flushed = False
 
-        # Connect using synchronous SDK context manager (apples-to-apples)
+        # Connect using synchronous SDK context manager
         with client.speak.v1.connect(
             model=config['tts_model'],
             encoding="linear16",
@@ -171,7 +169,7 @@ def generate_tts_audio_sync(text: str, session_id: str, config: Dict[str, Any]) 
         ) as connection:
             logger.info(f"Session {session_id}: TTS sync connection established")
 
-            # Define event handlers (proper SDK pattern)
+            # Define event handlers
             def on_message(message: SpeakV1SocketClientResponse) -> None:
                 nonlocal audio_chunks_received
                 if isinstance(message, bytes):
@@ -180,13 +178,11 @@ def generate_tts_audio_sync(text: str, session_id: str, config: Dict[str, Any]) 
                     audio_chunks.append(message)
                     logger.debug(f"Session {session_id}: *** TTS AUDIO CHUNK #{audio_chunks_received} *** {len(message)} bytes")
 
-                    # 🚀 STREAM CHUNK IMMEDIATELY (Convert LINEAR16 bytes to signed 16-bit integers)
-                    # SDK provides LINEAR16: convert bytes to proper signed 16-bit samples
-                    int16_samples = struct.unpack(f'<{len(message)//2}h', message)  # Little-endian signed 16-bit
-                    logger.info(f"Session {session_id}: 🎵 TTS Audio Fixed - Chunk #{audio_chunks_received}: {len(message)} bytes -> {len(int16_samples)} Int16 samples, range: {min(int16_samples)} to {max(int16_samples)}, first 10: {int16_samples[:10]}")
+                    # Convert LINEAR16 bytes to signed 16-bit integers for proper audio playback
+                    int16_samples = struct.unpack(f'<{len(message)//2}h', message)
 
                     socketio.emit('agent_speaking', {
-                        'audio': list(int16_samples),  # Send as proper signed 16-bit integers
+                        'audio': list(int16_samples),
                         'chunk_number': audio_chunks_received,
                         'timestamp': datetime.now().isoformat()
                     }, room=session_id)
